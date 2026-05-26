@@ -203,6 +203,7 @@ def image_relief():
     depth_mm          = max(10.0, min(float(data.get("depth_mm",  200.0)),         200.0))
     height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm", 100.0)),   200.0))
     base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
+    invert_brightness = bool(data.get("invert_brightness", False))
 
     scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
 
@@ -213,12 +214,14 @@ def image_relief():
             depth_mm=scaled_d,
             height_scale_mm=height_scale_mm,
             base_thickness_mm=base_thickness_mm,
+            invert_brightness=invert_brightness,
         )
     except Exception as e:
         return jsonify({"error": f"STL generation failed: {e}"}), 500
 
     job["relief_stl"] = stl_bytes
     job["relief_source"] = "image"
+    job["relief_filename"] = Path(job.get("filename", "image")).stem
     job["ts"] = time.time()
 
     return jsonify({
@@ -228,7 +231,7 @@ def image_relief():
         "height_scale_mm": height_scale_mm,
         "scale_factor": round(scale_factor, 4),
         "ready": True,
-        "message": "Image relief generated (brightness → height: 0-50mm)",
+        "message": "Image relief generated (brightness → height: 0-200mm)",
     })
 
 
@@ -378,12 +381,12 @@ def download(job_id, file_type):
         data = job.get("relief_stl")
         if not data:
             return jsonify({"error": "Relief STL not ready; call /relief first"}), 404
-        col = job.get("relief_column", "data")
+        relief_name = job.get("relief_filename") or job.get("relief_column", "data")
         return send_file(
             io.BytesIO(data),
             mimetype="application/sla",
             as_attachment=True,
-            download_name=f"{base}_{col}_relief.stl",
+            download_name=f"{relief_name}_relief.stl",
         )
     else:
         return jsonify({"error": f"Unknown file type: {file_type}"}), 400

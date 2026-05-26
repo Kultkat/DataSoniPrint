@@ -365,6 +365,10 @@
       <div style="margin-top:14px;padding:12px;background:rgba(100,255,180,0.08);border-radius:6px;font-size:0.8rem;color:var(--dim)">
         <strong style="color:var(--accent3)">Grayscale Mapping:</strong> Black (0mm) → White (up to 200mm above base) · Aspect ratio preserved
       </div>
+      <label style="display:flex;align-items:center;margin-top:14px;gap:8px;cursor:pointer">
+        <input type="checkbox" id="invertBrightnessCheckbox">
+        <span>Invert brightness (white=bottom, black=top)</span>
+      </label>
       <div class="error" id="uploadErrorImage"></div>
     </div>
 
@@ -745,6 +749,12 @@ generateBtn.addEventListener('click', async () => {
     height_scale_mm: parseFloat(heightSlider.value),
     base_thickness_mm: parseFloat(baseSlider.value),
   };
+
+  // Image mode: add brightness inversion toggle
+  if (isImage) {
+    const invertBrightnessCheckbox = $('#invertBrightnessCheckbox');
+    body.invert_brightness = invertBrightnessCheckbox.checked;
+  }
 
   // Data mode: add column and n_points
   if (!isImage) {

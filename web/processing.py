@@ -612,14 +612,15 @@ def image_to_relief_stl(
     depth_mm: float = 200.0,
     height_scale_mm: float = 200.0,
     base_thickness_mm: float = 3.0,
-    max_resolution_mm: float = 0.4,
+    max_resolution_mm: float = 0.2,
     max_mp: int = 10,
+    invert_brightness: bool = False,
 ) -> bytes:
     """Convert image (grayscale) to 3D-printable relief STL.
 
     Brightness → height mapping (Z-axis only):
-      - Black (0) → base_thickness_mm
-      - White (255) → base_thickness_mm + height_scale_mm
+      - Normal: Black (0) → base_thickness_mm, White (255) → base + height_scale_mm
+      - Inverted: White (0) → base_thickness_mm, Black (255) → base + height_scale_mm
 
     X/Y preserved aspect ratio (no skew). Max volume: 200×200×200mm.
 
@@ -629,8 +630,9 @@ def image_to_relief_stl(
         depth_mm:           max Y extent in mm (auto-scales to preserve aspect)
         height_scale_mm:    max Z range above base (0-200mm for grayscale)
         base_thickness_mm:  flat base height (default 3mm)
-        max_resolution_mm:  target pixel size in mm (default 0.4mm)
+        max_resolution_mm:  target pixel size in mm (default 0.2mm = high res)
         max_mp:             max megapixels (default 10)
+        invert_brightness:  if True, inverts grayscale (white=bottom, black=top)
 
     Returns:
         Binary STL bytes.
@@ -683,6 +685,10 @@ def image_to_relief_stl(
 
     img = img.resize((target_px_w, target_px_h), Image.Resampling.LANCZOS)
     px_array = np.array(img, dtype=np.float64) / 255.0  # normalize [0, 1]
+
+    # Apply brightness inversion if requested
+    if invert_brightness:
+        px_array = 1.0 - px_array
 
     n_x, n_y = px_array.shape[1], px_array.shape[0]
 
