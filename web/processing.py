@@ -11,9 +11,65 @@ import csv
 import io
 import json
 import math
+import os
 import struct
+import tempfile
 import wave
 import numpy as np
+
+# Optional format libraries — gracefully degrade if missing
+try:
+    import h5py
+except ImportError:
+    h5py = None
+
+try:
+    import netCDF4
+except ImportError:
+    netCDF4 = None
+
+try:
+    import cfgrib
+except ImportError:
+    cfgrib = None
+
+try:
+    import asdf
+except ImportError:
+    asdf = None
+
+
+# ─── Supported extensions ────────────────────────────────────────────────────
+
+SUPPORTED_EXTENSIONS = {
+    ".csv",
+    ".h5", ".hdf5", ".hdf",
+    ".nc", ".nc4", ".netcdf",
+    ".grib", ".grib2", ".grb", ".grb2",
+    ".asdf",
+}
+
+
+def supported_extension(filename):
+    """Check if a filename has a supported extension."""
+    ext = os.path.splitext(filename.lower())[1]
+    return ext in SUPPORTED_EXTENSIONS
+
+
+def _detect_format(filename):
+    """Return format string from filename extension."""
+    ext = os.path.splitext(filename.lower())[1]
+    if ext == ".csv":
+        return "csv"
+    if ext in (".h5", ".hdf5", ".hdf"):
+        return "hdf5"
+    if ext in (".nc", ".nc4", ".netcdf"):
+        return "netcdf"
+    if ext in (".grib", ".grib2", ".grb", ".grb2"):
+        return "grib"
+    if ext == ".asdf":
+        return "asdf"
+    raise ValueError(f"Unsupported file extension: {ext}")
 
 
 # ─── CSV loading ─────────────────────────────────────────────────────────────
@@ -65,6 +121,254 @@ def load_csv(file_stream):
     return headers, columns, len(rows)
 
 
+# ─── HDF5 loading ────────────────────────────────────────────────────────────
+
+def load_hdf5(file_bytes):
+    """Load numeric 1-D datasets from an HDF5 file.
+
+    Returns (headers, columns, row_count).
+    """
+    if h5py is None:
+        raise ValueError("HDF5 support requires the h5py library")
+
+    buf = io.BytesIO(file_bytes)
+    headers = []
+    columns = {}
+    max_len = 0
+
+    with h5py.File(buf, "r") as f:
+        def _visit(name, obj):
+            nonlocal max_len
+            if isinstance(obj, h5py.Dataset):
+                if obj.ndim == 1 and np.issubdtype(obj.dtype, np.number):
+                    data = obj[()].astype(np.float64)
+                    label = name.replace("/", ".")
+                    headers.append(label)
+                    columns[label] = data
+                    max_len = max(max_len, len(data))
+                elif obj.ndim == 2 and np.issubdtype(obj.dtype, np.number):
+                    data = obj[()]
+                    for ci in range(min(data.shape[1], 64)):
+                        label = f"{name.replace('/', '.')}.col{ci}"
+                        col = data[:, ci].astype(np.float64)
+                        headers.append(label)
+                        columns[label] = col
+                        max_len = max(max_len, len(col))
+        f.visititems(_visit)
+
+    if not headers:
+        raise ValueError("No numeric datasets found in HDF5 file")
+
+    return headers, columns, max_len
+
+
+# ─── NetCDF loading ──────────────────────────────────────────────────────────
+
+def load_netcdf(file_bytes):
+    """Load numeric variables from a NetCDF file.
+
+    Returns (headers, columns, row_count).
+    """
+    if netCDF4 is None:
+        raise ValueError("NetCDF support requires the netCDF4 library")
+
+    # netCDF4 needs a real file path — write to temp file
+    with tempfile.NamedTemporaryFile(suffix=".nc", delete=False) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+
+    try:
+        ds = netCDF4.Dataset(tmp_path, "r")
+        headers = []
+        columns = {}
+        max_len = 0
+
+        for var_name in ds.variables:
+            var = ds.variables[var_name]
+            if np.issubdtype(var.dtype, np.number):
+                data = var[:].flatten().astype(np.float64)
+                if hasattr(data, "filled"):
+                    data = data.filled(np.nan)
+                headers.append(var_name)
+                columns[var_name] = data
+                max_len = max(max_len, len(data))
+
+        ds.close()
+    finally:
+        os.unlink(tmp_path)
+
+    if not headers:
+        raise ValueError("No numeric variables found in NetCDF file")
+
+    return headers, columns, max_len
+
+
+# ─── GRIB loading ────────────────────────────────────────────────────────────
+
+def load_grib(file_bytes):
+    """Load numeric fields from a GRIB/GRIB2 file.
+
+    Returns (headers, columns, row_count).
+    """
+    if cfgrib is None:
+        raise ValueError("GRIB support requires the cfgrib library")
+
+    import xarray as xr
+
+    with tempfile.NamedTemporaryFile(suffix=".grib2", delete=False) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+
+    try:
+        datasets = cfgrib.open_datasets(tmp_path)
+        headers = []
+        columns = {}
+        max_len = 0
+
+        for ds in datasets:
+            for var_name in ds.data_vars:
+                var = ds[var_name]
+                if np.issubdtype(var.dtype, np.number):
+                    data = var.values.flatten().astype(np.float64)
+                    data = np.where(np.isfinite(data), data, np.nan)
+                    headers.append(var_name)
+                    columns[var_name] = data
+                    max_len = max(max_len, len(data))
+
+        for ds in datasets:
+            ds.close()
+    finally:
+        os.unlink(tmp_path)
+
+    if not headers:
+        raise ValueError("No numeric fields found in GRIB file")
+
+    return headers, columns, max_len
+
+
+# ─── ASDF loading ────────────────────────────────────────────────────────────
+
+def load_asdf(file_bytes):
+    """Load numeric arrays from an ASDF file.
+
+    Returns (headers, columns, row_count).
+    """
+    if asdf is None:
+        raise ValueError("ASDF support requires the asdf library")
+
+    with tempfile.NamedTemporaryFile(suffix=".asdf", delete=False) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+
+    try:
+        af = asdf.open(tmp_path)
+        headers = []
+        columns = {}
+        max_len = 0
+
+        def _walk(tree, prefix=""):
+            nonlocal max_len
+            if isinstance(tree, dict):
+                for key, val in tree.items():
+                    _walk(val, f"{prefix}{key}." if prefix else f"{key}.")
+            elif hasattr(tree, 'dtype') and hasattr(tree, 'shape') and np.issubdtype(tree.dtype, np.number):
+                data = np.asarray(tree).flatten().astype(np.float64)
+                label = prefix.rstrip(".")
+                headers.append(label)
+                columns[label] = data
+                max_len = max(max_len, len(data))
+            elif isinstance(tree, (list, tuple)):
+                for i, item in enumerate(tree):
+                    _walk(item, f"{prefix}[{i}].")
+
+        _walk(af.tree)
+        af.close()
+    finally:
+        os.unlink(tmp_path)
+
+    if not headers:
+        raise ValueError("No numeric arrays found in ASDF file")
+
+    return headers, columns, max_len
+
+
+# ─── Unified loader ─────────────────────────────────────────────────────────
+
+def load_file(file_bytes, filename):
+    """Detect format from filename and load data.
+
+    Returns (headers, columns, row_count).
+    """
+    fmt = _detect_format(filename)
+
+    if fmt == "csv":
+        return load_csv(io.BytesIO(file_bytes))
+    elif fmt == "hdf5":
+        return load_hdf5(file_bytes)
+    elif fmt == "netcdf":
+        return load_netcdf(file_bytes)
+    elif fmt == "grib":
+        return load_grib(file_bytes)
+    elif fmt == "asdf":
+        return load_asdf(file_bytes)
+    else:
+        raise ValueError(f"Unsupported format: {fmt}")
+
+
+# ─── Quick preview chart ────────────────────────────────────────────────────
+
+def generate_preview_png(columns, headers, selected_column=None):
+    """Generate a quick matplotlib line chart PNG for the selected column.
+
+    If selected_column is None, plots the first column.
+    Returns PNG bytes.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    col_name = selected_column if selected_column in columns else headers[0]
+    data = columns[col_name]
+
+    fig, ax = plt.subplots(figsize=(8, 3), dpi=100)
+    fig.patch.set_facecolor("#12121c")
+    ax.set_facecolor("#0a0a12")
+
+    ax.plot(data, color="#50b4ff", linewidth=0.6, alpha=0.9)
+    ax.set_title(col_name, color="#dcdce6", fontsize=11, pad=8)
+    ax.set_xlabel("Sample", color="#8c8ca0", fontsize=9)
+    ax.set_ylabel("Value", color="#8c8ca0", fontsize=9)
+    ax.tick_params(colors="#8c8ca0", labelsize=8)
+    for spine in ax.spines.values():
+        spine.set_color("#32324a")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches="tight",
+                facecolor=fig.get_facecolor(), edgecolor="none")
+    plt.close(fig)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─── Data safety ─────────────────────────────────────────────────────────────
+
+# Cap input points to prevent multi-GB memory allocations.
+# 500K points × 441 samples/point = 220M samples ≈ 1.7 GB — manageable.
+MAX_DATA_POINTS = 500_000
+
+# Time per data point (seconds).  Matches csv_viewer.py: 0.01s = 10ms each.
+SECONDS_PER_POINT = 0.01
+
+
+def _safe_downsample(data, max_points=MAX_DATA_POINTS):
+    """Downsample a 1D array to max_points via linear interpolation."""
+    if len(data) <= max_points:
+        return data
+    old_t = np.linspace(0, 1, len(data))
+    new_t = np.linspace(0, 1, max_points)
+    return np.interp(new_t, old_t, data)
+
+
 # ─── Column stats ────────────────────────────────────────────────────────────
 
 def column_stats(columns, headers):
@@ -83,27 +387,26 @@ def column_stats(columns, headers):
     return stats
 
 
-# ─── FM Synthesis (core sonification) ────────────────────────────────────────
+# ─── FM Synthesis ────────────────────────────────────────────────────────────
 
 def sonify_column(data, spread=0.35, playback_sr=44100):
     """Convert a numeric column to FM-synthesized audio.
 
-    Args:
-        data: numpy array of values (may contain NaN)
-        spread: 0.0–1.0 spread slider value
-        playback_sr: output sample rate
+    Every data point gets SECONDS_PER_POINT (10ms) of audio — all points
+    are audible.  Duration scales with the dataset:
+        audio_duration = n_points × 0.01s
 
-    Returns:
-        audio: numpy float64 array, peak ≤ 0.75
+    This matches the LIGO sonifier / CSV-viewer approach.
     """
-    data = np.nan_to_num(data.copy(), nan=0.0)
+    data = _safe_downsample(np.nan_to_num(data.copy(), nan=0.0))
 
     peak = np.max(np.abs(data))
     normed = data / peak if peak > 0 else data
 
-    # upsample: each data point → ~0.01s of audio
-    samples_per_point = max(1, int(playback_sr * 0.01))
+    # Each data point → 10ms of audio (441 samples at 44100 Hz)
+    samples_per_point = max(1, int(playback_sr * SECONDS_PER_POINT))
     out_len = len(normed) * samples_per_point
+
     orig_t = np.linspace(0, 1, len(normed))
     new_t = np.linspace(0, 1, out_len)
     normed_up = np.interp(new_t, orig_t, normed)
@@ -117,6 +420,39 @@ def sonify_column(data, spread=0.35, playback_sr=44100):
     audio = np.sin(2.0 * np.pi * phase) * 0.75
 
     return audio
+
+
+def sonify_columns(columns, col_names, spread=0.35, playback_sr=44100):
+    """Sonify multiple columns as layered FM voices, mixed to mono.
+
+    Each column is independently FM-synthesized (same approach as
+    sonify_column), then all voices are summed and normalized.
+    Duration is determined by the data — every point gets 10ms.
+    """
+    if not col_names:
+        raise ValueError("No columns selected for sonification")
+
+    n_voices = len(col_names)
+    audios = []
+
+    for name in col_names:
+        voice = sonify_column(columns[name], spread=spread, playback_sr=playback_sr)
+        audios.append(voice)
+
+    # Align to shortest voice length
+    min_len = min(len(a) for a in audios)
+    audios = [a[:min_len] for a in audios]
+
+    # Mix: sum all voices, normalize
+    mix = np.zeros(min_len)
+    for a in audios:
+        mix += a
+
+    peak = np.max(np.abs(mix))
+    if peak > 0:
+        mix = mix * (0.75 / peak)
+
+    return mix
 
 
 def apply_speed(audio, speed, playback_sr=44100):
@@ -140,7 +476,7 @@ def apply_volume(audio, volume):
 # ─── WAV export ──────────────────────────────────────────────────────────────
 
 def audio_to_wav_bytes(audio, sample_rate=44100):
-    """Convert float64 audio array to in-memory WAV bytes."""
+    """Convert float64 mono audio array to in-memory WAV bytes."""
     audio = np.clip(audio, -1.0, 1.0)
     pcm = (audio * 32767).astype(np.int16)
 
@@ -268,36 +604,181 @@ def spectrogram_to_stl_bytes(times, freqs, spec_db,
     return buf.read()
 
 
-# ─── Full pipeline ───────────────────────────────────────────────────────────
+# ─── Relief STL (direct data → 3D print) ─────────────────────────────────────
 
-def process_csv(file_stream, params):
-    """Run the complete DataSoniPrint pipeline on a CSV upload.
+def scale_to_bed(width_mm: float, depth_mm: float,
+                 height_scale_mm: float, max_bed_mm: float = 200.0
+                 ) -> tuple:
+    """Proportionally scale width and depth to fit within max_bed_mm × max_bed_mm.
+
+    Height is never scaled — it is an independent aesthetic parameter.
+    Returns (scaled_width_mm, scaled_depth_mm, scale_factor) where
+    scale_factor is in (0, 1].  If both dimensions already fit, returns
+    the originals unchanged with scale_factor == 1.0.
 
     Args:
-        file_stream: file-like object with CSV data
+        width_mm:       requested X dimension in mm
+        depth_mm:       requested Y dimension in mm
+        height_scale_mm: Z range in mm (returned unchanged, present for
+                         completeness so callers can forward all 3 values)
+        max_bed_mm:     maximum allowed dimension on each axis (default 200 mm)
+
+    Returns:
+        (scaled_width_mm, scaled_depth_mm, scale_factor)
+    """
+    scale = min(max_bed_mm / max(width_mm, 1e-9),
+                max_bed_mm / max(depth_mm, 1e-9),
+                1.0)
+    return float(width_mm * scale), float(depth_mm * scale), float(scale)
+
+
+def data_column_to_relief_stl(
+    data: np.ndarray,
+    width_mm: float = 150.0,
+    depth_mm: float = 20.0,
+    height_scale_mm: float = 20.0,
+    base_thickness_mm: float = 3.0,
+    n_points: int = 200,
+) -> bytes:
+    """Convert a 1-D data column to a watertight 3D-printable STL relief.
+
+    The relief is a solid extrusion:
+      - X axis  = sample index, scaled to [0, width_mm]
+      - Y axis  = constant depth, spanning [0, depth_mm]
+      - Z axis  = base_thickness_mm + normalized_value * height_scale_mm
+
+    The mesh is watertight (manifold) and suitable for FDM/SLA printing.
+    Triangle count = 8 * (n_points - 1) + 4.
+
+    Args:
+        data:               1-D numpy array of numeric values (NaN-safe)
+        width_mm:           X extent of the relief in mm
+        depth_mm:           Y extrusion depth in mm
+        height_scale_mm:    maximum Z range above base_thickness_mm
+        base_thickness_mm:  flat base height ensuring printability
+        n_points:           number of profile samples (≤ len(data))
+
+    Returns:
+        Binary STL bytes ready to send as a file download.
+
+    Raises:
+        ValueError: if data is empty after NaN removal.
+    """
+    from stl import mesh as stl_mesh
+
+    # --- 1. Downsample to printable resolution ---
+    data = np.nan_to_num(np.asarray(data, dtype=np.float64), nan=0.0)
+    if len(data) == 0:
+        raise ValueError("Data column is empty")
+
+    n_pts = min(int(n_points), len(data))
+    if len(data) > n_pts:
+        t_old = np.linspace(0.0, 1.0, len(data))
+        t_new = np.linspace(0.0, 1.0, n_pts)
+        data = np.interp(t_new, t_old, data)
+
+    n = len(data)   # actual sample count (may be < n_points if data was short)
+
+    # --- 2. Normalize values to [0, 1] ---
+    d_min, d_max = data.min(), data.max()
+    if d_max > d_min:
+        norm = (data - d_min) / (d_max - d_min)
+    else:
+        norm = np.zeros(n, dtype=np.float64)   # flat line → all at base
+
+    # --- 3. Build vertex arrays ---
+    xs = np.linspace(0.0, float(width_mm), n)
+    zs = float(base_thickness_mm) + norm * float(height_scale_mm)
+
+    TF = np.column_stack([xs, np.zeros(n),                 zs])           # top-front
+    TB = np.column_stack([xs, np.full(n, float(depth_mm)), zs])         # top-back
+    BF = np.column_stack([xs, np.zeros(n),                 np.zeros(n)])  # bot-front
+    BB = np.column_stack([xs, np.full(n, float(depth_mm)), np.zeros(n)]) # bot-back
+
+    # --- 4. Triangulate all six faces (vectorized for speed) ---
+    tris = []
+
+    # Top surface  — outward normal +Z
+    for i in range(n - 1):
+        tris.append([TF[i], TF[i + 1], TB[i + 1]])
+        tris.append([TF[i], TB[i + 1], TB[i]])
+
+    # Bottom surface — outward normal -Z
+    for i in range(n - 1):
+        tris.append([BF[i], BB[i], BB[i + 1]])
+        tris.append([BF[i], BB[i + 1], BF[i + 1]])
+
+    # Front wall (y=0) — outward normal -Y
+    for i in range(n - 1):
+        tris.append([BF[i], BF[i + 1], TF[i + 1]])
+        tris.append([BF[i], TF[i + 1], TF[i]])
+
+    # Back wall (y=depth_mm) — outward normal +Y
+    for i in range(n - 1):
+        tris.append([BB[i], TB[i], TB[i + 1]])
+        tris.append([BB[i], TB[i + 1], BB[i + 1]])
+
+    # Left cap (x=0) — outward normal -X
+    tris.append([BF[0], TF[0], TB[0]])
+    tris.append([BF[0], TB[0], BB[0]])
+
+    # Right cap (x=width_mm) — outward normal +X
+    tris.append([BF[-1], BB[-1], TB[-1]])
+    tris.append([BF[-1], TB[-1], TF[-1]])
+
+    tri_array = np.array(tris, dtype=np.float64)
+    n_tris = len(tri_array)
+
+    # --- 5. Build mesh from triangles ---
+    m = stl_mesh.Mesh(np.zeros(n_tris, dtype=stl_mesh.Mesh.dtype))
+    m.vectors = tri_array
+    m.update_normals()
+
+    buf = io.BytesIO()
+    m.save("relief.stl", fh=buf)
+    buf.seek(0)
+    return buf.read()
+
+
+# ─── Full pipeline ───────────────────────────────────────────────────────────
+
+def process_file(file_bytes, filename, params):
+    """Run the complete DataSoniPrint pipeline on any supported file.
+
+    Duration scales with the data: each data point gets 10ms of audio.
+    Speed slider then compresses/expands playback time.
+
+    Args:
+        file_bytes: raw bytes of the uploaded file
+        filename: original filename (used to detect format)
         params: dict with keys:
-            column: str — which column to sonify
+            columns: list of str — columns to sonify (layered FM voices)
+            column: str — fallback single column
             spread: float 0–1
             speed: float 0–1 slider value (maps to 0.25x–4x)
             volume: float 0–1
 
     Returns:
-        dict with keys:
-            wav: bytes — WAV audio file
-            stl: bytes — STL mesh file
-            settings: dict — parameters used
-            stats: dict — per-column statistics
-            headers: list — column names
+        dict with wav, stl, settings, stats, headers
     """
     SR = 44100
 
     # --- load ---
-    headers, columns, row_count = load_csv(file_stream)
+    headers, columns, row_count = load_file(file_bytes, filename)
 
-    # --- pick column ---
-    col_name = params.get("column", headers[0])
-    if col_name not in columns:
-        col_name = headers[0]
+    # --- determine columns ---
+    selected_cols = params.get("columns", [])
+    single_col = params.get("column")
+
+    if not selected_cols:
+        if single_col and single_col in columns:
+            selected_cols = [single_col]
+        else:
+            selected_cols = headers[:8]
+
+    selected_cols = [c for c in selected_cols if c in columns]
+    if not selected_cols:
+        selected_cols = [headers[0]]
 
     spread = float(params.get("spread", 0.35))
     speed_slider = float(params.get("speed", 0.5))
@@ -305,8 +786,13 @@ def process_csv(file_stream, params):
 
     speed_multiplier = 0.25 * (16 ** speed_slider)  # 0.25x–4x
 
-    # --- sonify ---
-    audio = sonify_column(columns[col_name], spread=spread, playback_sr=SR)
+    # --- sonify (all data points audible, duration = n_points × 10ms) ---
+    if len(selected_cols) == 1:
+        audio = sonify_column(columns[selected_cols[0]], spread=spread, playback_sr=SR)
+    else:
+        audio = sonify_columns(columns, selected_cols, spread=spread, playback_sr=SR)
+
+    # Speed resamples the audio (doesn't drop data points)
     audio = apply_speed(audio, speed_multiplier, playback_sr=SR)
     audio = apply_volume(audio, volume)
 
@@ -319,10 +805,13 @@ def process_csv(file_stream, params):
 
     # --- settings ---
     stats = column_stats(columns, headers)
+    fmt = _detect_format(filename)
     settings = {
-        "source_file": "uploaded.csv",
+        "source_file": filename,
+        "source_format": fmt,
         "row_count": row_count,
-        "column": col_name,
+        "columns_sonified": selected_cols,
+        "n_voices": len(selected_cols),
         "spread": spread,
         "speed_slider": speed_slider,
         "speed_multiplier": round(speed_multiplier, 4),
@@ -330,6 +819,7 @@ def process_csv(file_stream, params):
         "sample_rate": SR,
         "audio_samples": len(audio),
         "audio_duration_sec": round(len(audio) / SR, 2),
+        "seconds_per_point": SECONDS_PER_POINT,
         "stl_dimensions_mm": "150 x 80 x 17",
         "column_stats": stats,
     }

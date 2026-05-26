@@ -3,7 +3,15 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DataSoniPrint — Data Sonification &amp; 3D Print</title>
+<title>DataSoniPrint — 2D Data → 3D Relief</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 <style>
   :root {
     --bg: #0a0a12;
@@ -87,6 +95,25 @@
   .upload-zone .icon { font-size: 2rem; }
   #fileInput { display: none; }
 
+  .example-buttons {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .btn-example {
+    padding: 10px 20px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s;
+  }
+  .btn-example:hover { background: rgba(80, 180, 255, 0.1); }
+
   .file-info {
     display: none;
     margin-top: 14px;
@@ -99,7 +126,7 @@
   .file-info .name { color: var(--accent); font-weight: 600; }
 
   /* Column selector */
-  .col-select { display: none; margin-top: 10px; }
+  .col-select { display: none; margin-top: 14px; }
   .col-select.show { display: block; }
   .col-select select {
     width: 100%;
@@ -148,11 +175,17 @@
     height: 6px;
   }
   .slider-row .val {
-    width: 60px;
+    width: 80px;
     text-align: right;
     font-size: 0.82rem;
     font-variant-numeric: tabular-nums;
     color: var(--text);
+  }
+  .slider-row .scaled {
+    width: 200px;
+    font-size: 0.75rem;
+    color: var(--dim);
+    white-space: nowrap;
   }
 
   /* Process button */
@@ -181,8 +214,19 @@
     transform: none;
   }
 
+  /* 3D Viewer */
+  .viewer-container { display: none; }
+  .viewer-container.show { display: block; }
+  #stlViewer {
+    width: 100%;
+    height: 350px;
+    border-radius: 6px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+
   /* Downloads */
-  .downloads { display: none; }
+  .downloads { display: none; margin-top: 14px; }
   .downloads.show { display: flex; flex-direction: column; gap: 10px; }
   .dl-row {
     display: flex;
@@ -191,6 +235,7 @@
     padding: 10px 16px;
     border-radius: 8px;
     font-size: 0.9rem;
+    background: rgba(80, 180, 255, 0.08);
   }
   .dl-row a {
     color: var(--accent);
@@ -200,15 +245,7 @@
     transition: border-color 0.15s;
   }
   .dl-row a:hover { border-bottom-color: var(--accent); }
-  .dl-wav  { background: rgba(80, 180, 255, 0.08); }
-  .dl-stl  { background: rgba(180, 130, 255, 0.08); }
-  .dl-json { background: rgba(100, 255, 180, 0.08); }
   .dl-icon { font-size: 1.3rem; }
-
-  /* Audio preview */
-  .audio-preview { display: none; margin-top: 10px; }
-  .audio-preview.show { display: block; }
-  .audio-preview audio { width: 100%; border-radius: 6px; }
 
   /* Progress */
   .progress { display: none; margin-top: 10px; }
@@ -250,7 +287,7 @@
 
 <header>
   <h1>DataSoniPrint</h1>
-  <p>Upload CSV &rarr; Sonify &rarr; Download Audio + 3D Print + Settings</p>
+  <p>2D Data → 3D Relief STL for 3D Printing · Fit to 200×200mm bed</p>
 </header>
 
 <main>
@@ -259,19 +296,21 @@
   <div class="card" id="uploadCard">
     <h2>1 &mdash; Upload Data</h2>
     <div class="upload-zone" id="dropZone">
-      <div class="icon">&#128203;</div>
-      <div><strong>Drop a CSV file here</strong></div>
-      <p>or click to browse &middot; max 50 MB</p>
+      <div class="icon">📁</div>
+      <div><strong>Drop a data file here</strong></div>
+      <p>CSV, HDF5, NetCDF, GRIB, ASDF &middot; max 1 GB</p>
     </div>
-    <input type="file" id="fileInput" accept=".csv">
+    <input type="file" id="fileInput" accept=".csv,.h5,.hdf5,.hdf,.nc,.nc4,.netcdf,.grib,.grib2,.grb,.grb2,.asdf">
+    <div class="example-buttons">
+      <button class="btn-example" id="loadSampleBtn">📊 Load Sample CSV</button>
+      <button class="btn-example" id="loadGWBtn">🌊 Load GW Chirp</button>
+    </div>
     <div class="file-info" id="fileInfo">
       <span class="name" id="fileName"></span>&ensp;&mdash;&ensp;
       <span id="fileMeta"></span>
     </div>
     <div class="col-select" id="colSelect">
-      <label style="font-size:0.82rem;color:var(--dim);display:block;margin-bottom:6px">
-        Sonify column:
-      </label>
+      <label style="font-size:0.82rem;color:var(--dim);display:block;margin-bottom:8px">Select column to print:</label>
       <select id="colDropdown"></select>
     </div>
     <div class="stats-table" id="statsTable">
@@ -283,119 +322,167 @@
     <div class="error" id="uploadError"></div>
   </div>
 
-  <!-- Step 2: Configure -->
+  <!-- Step 2: Configure Relief -->
   <div class="card" id="configCard">
-    <h2>2 &mdash; Configure Sonification</h2>
+    <h2>2 &mdash; Configure Relief</h2>
     <div class="sliders" id="sliders">
       <div class="slider-row">
-        <label>Spread</label>
-        <input type="range" id="spreadSlider" min="0" max="100" value="35">
-        <span class="val" id="spreadVal">0.35</span>
+        <label>Width</label>
+        <input type="range" id="widthSlider" min="50" max="200" value="180">
+        <span class="val" id="widthVal">180 mm</span>
       </div>
       <div class="slider-row">
-        <label>Speed</label>
-        <input type="range" id="speedSlider" min="0" max="100" value="50">
-        <span class="val" id="speedVal">1.00x</span>
+        <label>Depth</label>
+        <input type="range" id="depthSlider" min="10" max="50" value="20">
+        <span class="val" id="depthVal">20 mm</span>
       </div>
       <div class="slider-row">
-        <label>Volume</label>
-        <input type="range" id="volumeSlider" min="0" max="100" value="70">
-        <span class="val" id="volumeVal">0.70</span>
+        <label>Height Scale</label>
+        <input type="range" id="heightSlider" min="5" max="40" value="20">
+        <span class="val" id="heightVal">20 mm</span>
+      </div>
+      <div class="slider-row">
+        <label>Base Thickness</label>
+        <input type="range" id="baseSlider" min="2" max="6" value="3">
+        <span class="val" id="baseVal">3 mm</span>
+      </div>
+      <div class="slider-row">
+        <label>Resolution</label>
+        <input type="range" id="npointsSlider" min="50" max="500" value="200">
+        <span class="val" id="npointsVal">200 pts</span>
+      </div>
+      <div class="slider-row">
+        <label></label>
+        <span class="scaled" id="scaledDims"></span>
       </div>
     </div>
     <div class="actions" id="actions">
-      <button class="btn btn-primary" id="processBtn" disabled>
-        &#9654;&ensp;Process &amp; Generate
+      <button class="btn btn-primary" id="generateBtn" disabled>
+        ▶&ensp;Generate Relief STL
       </button>
     </div>
     <div class="progress" id="progress">
       <div class="spinner"></div>
-      <span>Processing &mdash; sonifying, computing spectrogram, building STL&hellip;</span>
+      <span>Generating relief mesh...</span>
     </div>
-    <div class="error" id="processError"></div>
+    <div class="error" id="generateError"></div>
   </div>
 
-  <!-- Step 3: Downloads -->
-  <div class="card" id="downloadCard">
-    <h2>3 &mdash; Download Results</h2>
-    <div class="downloads" id="downloads">
-      <div class="dl-row dl-wav">
-        <span class="dl-icon">&#127925;</span>
-        <a id="dlWav" href="#">sonified_audio.wav</a>
-        <span style="color:var(--dim);font-size:0.8rem" id="wavInfo"></span>
-      </div>
-      <div class="dl-row dl-stl">
-        <span class="dl-icon">&#129529;</span>
-        <a id="dlStl" href="#">data_terrain.stl</a>
-        <span style="color:var(--dim);font-size:0.8rem">3D-printable spectrogram terrain</span>
-      </div>
-      <div class="dl-row dl-json">
-        <span class="dl-icon">&#128190;</span>
-        <a id="dlSettings" href="#">settings.json</a>
-        <span style="color:var(--dim);font-size:0.8rem">All parameters &amp; column stats</span>
-      </div>
+  <!-- Step 3: Preview & Download -->
+  <div class="card" id="outputCard">
+    <h2>3 &mdash; Preview &amp; Download</h2>
+    <div class="viewer-container" id="viewerContainer">
+      <canvas id="stlViewer"></canvas>
     </div>
-    <div class="audio-preview" id="audioPreview">
-      <audio id="audioPlayer" controls></audio>
+    <div class="downloads" id="downloads">
+      <div class="dl-row">
+        <span class="dl-icon">🖨️</span>
+        <a id="dlRelief" href="#">Download Relief STL</a>
+        <span style="color:var(--dim);font-size:0.8rem" id="reliefInfo">Ready to print</span>
+      </div>
     </div>
   </div>
 
 </main>
 
 <footer>
-  DataSoniPrint &mdash; Making data experienceable through sound, sight, and touch.
+  DataSoniPrint — Making data experienceable through touch and sight. Hosted locally with Python Flask + Three.js.
 </footer>
 
-<script>
-const $ = s => document.querySelector(s);
+<script type="module">
+import * as THREE from 'three';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
-// State
+// ─── Global state ───────────────────────────────────────────────────────────
+
 let jobId = null;
 let headers = [];
+let renderer = null, scene = null, camera = null, controls = null, currentMesh = null;
+
+const $ = s => document.querySelector(s);
 
 // Elements
-const dropZone    = $('#dropZone');
-const fileInput   = $('#fileInput');
-const fileInfo    = $('#fileInfo');
-const fileName    = $('#fileName');
-const fileMeta    = $('#fileMeta');
-const colSelect   = $('#colSelect');
-const colDropdown = $('#colDropdown');
-const statsTable  = $('#statsTable');
-const statsBody   = $('#statsBody');
-const uploadError = $('#uploadError');
-const sliders     = $('#sliders');
-const actions     = $('#actions');
-const processBtn  = $('#processBtn');
-const progress    = $('#progress');
-const processError= $('#processError');
-const downloads   = $('#downloads');
-const audioPreview= $('#audioPreview');
-const audioPlayer = $('#audioPlayer');
+const dropZone       = $('#dropZone');
+const fileInput      = $('#fileInput');
+const fileInfo       = $('#fileInfo');
+const fileName       = $('#fileName');
+const fileMeta       = $('#fileMeta');
+const colSelect      = $('#colSelect');
+const colDropdown    = $('#colDropdown');
+const statsTable     = $('#statsTable');
+const statsBody      = $('#statsBody');
+const uploadError    = $('#uploadError');
+const sliders        = $('#sliders');
+const actions        = $('#actions');
+const generateBtn    = $('#generateBtn');
+const progress       = $('#progress');
+const generateError  = $('#generateError');
+const viewerContainer = $('#viewerContainer');
+const downloads      = $('#downloads');
+const dlRelief       = $('#dlRelief');
 
-// Slider readouts
-const spreadSlider = $('#spreadSlider');
-const speedSlider  = $('#speedSlider');
-const volumeSlider = $('#volumeSlider');
-const spreadVal    = $('#spreadVal');
-const speedVal     = $('#speedVal');
-const volumeVal    = $('#volumeVal');
+// Sliders
+const widthSlider   = $('#widthSlider');
+const depthSlider   = $('#depthSlider');
+const heightSlider  = $('#heightSlider');
+const baseSlider    = $('#baseSlider');
+const npointsSlider = $('#npointsSlider');
+const widthVal      = $('#widthVal');
+const depthVal      = $('#depthVal');
+const heightVal     = $('#heightVal');
+const baseVal       = $('#baseVal');
+const npointsVal    = $('#npointsVal');
+const scaledDims    = $('#scaledDims');
 
-function sliderNorm(el) { return parseInt(el.value) / 100; }
-function speedDisplay(v) { return (0.25 * Math.pow(16, v)).toFixed(2) + 'x'; }
+// ─── Utility functions ──────────────────────────────────────────────────────
 
-spreadSlider.addEventListener('input', () => {
-  spreadVal.textContent = sliderNorm(spreadSlider).toFixed(2);
+function scaleToBed(width, depth, maxBed = 200.0) {
+  const scale = Math.min(maxBed / width, maxBed / depth, 1.0);
+  return { w: width * scale, d: depth * scale, s: scale };
+}
+
+function updateScaledDims() {
+  const w = parseFloat(widthSlider.value);
+  const d = parseFloat(depthSlider.value);
+  const { w: sw, d: sd, s } = scaleToBed(w, d);
+  if (s < 1.0) {
+    scaledDims.textContent = `→ prints as ${sw.toFixed(1)} × ${sd.toFixed(1)} mm (scaled ×${s.toFixed(3)})`;
+  } else {
+    scaledDims.textContent = `→ prints as ${sw.toFixed(1)} × ${sd.toFixed(1)} mm`;
+  }
+}
+
+function getSelectedColumn() {
+  return colDropdown.value;
+}
+
+// ─── Slider updates ─────────────────────────────────────────────────────────
+
+widthSlider.addEventListener('input', () => {
+  widthVal.textContent = widthSlider.value + ' mm';
+  updateScaledDims();
 });
-speedSlider.addEventListener('input', () => {
-  speedVal.textContent = speedDisplay(sliderNorm(speedSlider));
+depthSlider.addEventListener('input', () => {
+  depthVal.textContent = depthSlider.value + ' mm';
+  updateScaledDims();
 });
-volumeSlider.addEventListener('input', () => {
-  volumeVal.textContent = sliderNorm(volumeSlider).toFixed(2);
+heightSlider.addEventListener('input', () => {
+  heightVal.textContent = heightSlider.value + ' mm';
+});
+baseSlider.addEventListener('input', () => {
+  baseVal.textContent = baseSlider.value + ' mm';
+});
+npointsSlider.addEventListener('input', () => {
+  npointsVal.textContent = npointsSlider.value + ' pts';
 });
 
-// Upload — drag & drop
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+// ─── File upload ────────────────────────────────────────────────────────────
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag');
+});
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
 dropZone.addEventListener('drop', e => {
   e.preventDefault();
@@ -407,15 +494,30 @@ fileInput.addEventListener('change', () => {
   if (fileInput.files.length) handleFile(fileInput.files[0]);
 });
 
-async function handleFile(file) {
-  // Reset state
-  uploadError.classList.remove('show');
-  processError.classList.remove('show');
-  downloads.classList.remove('show');
-  audioPreview.classList.remove('show');
+$('#loadSampleBtn').addEventListener('click', async () => {
+  const res = await fetch('/example?name=sample');
+  const blob = await res.blob();
+  const file = new File([blob], 'sample_data.csv', { type: 'text/csv' });
+  handleFile(file);
+});
 
-  if (!file.name.toLowerCase().endsWith('.csv')) {
-    uploadError.textContent = 'Only CSV files are supported.';
+$('#loadGWBtn').addEventListener('click', async () => {
+  const res = await fetch('/example?name=gw');
+  const blob = await res.blob();
+  const file = new File([blob], 'gw_chirp.csv', { type: 'text/csv' });
+  handleFile(file);
+});
+
+async function handleFile(file) {
+  uploadError.classList.remove('show');
+  generateError.classList.remove('show');
+  downloads.classList.remove('show');
+  viewerContainer.classList.remove('show');
+
+  const allowedExt = ['.csv','.h5','.hdf5','.hdf','.nc','.nc4','.netcdf','.grib','.grib2','.grb','.grb2','.asdf'];
+  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  if (!allowedExt.includes(ext)) {
+    uploadError.textContent = 'Unsupported format. Accepted: CSV, HDF5, NetCDF, GRIB, ASDF';
     uploadError.classList.add('show');
     return;
   }
@@ -441,7 +543,7 @@ async function handleFile(file) {
     fileMeta.textContent = `${data.row_count} rows · ${data.headers.length} numeric columns`;
     fileInfo.classList.add('show');
 
-    // Column selector
+    // Column dropdown
     colDropdown.innerHTML = '';
     data.headers.forEach(h => {
       const opt = document.createElement('option');
@@ -467,7 +569,7 @@ async function handleFile(file) {
     // Enable controls
     sliders.classList.add('show');
     actions.classList.add('show');
-    processBtn.disabled = false;
+    generateBtn.disabled = false;
 
   } catch (e) {
     uploadError.textContent = 'Network error: ' + e.message;
@@ -475,24 +577,36 @@ async function handleFile(file) {
   }
 }
 
-// Process
-processBtn.addEventListener('click', async () => {
-  processBtn.disabled = true;
-  processError.classList.remove('show');
+// ─── Generate relief ────────────────────────────────────────────────────────
+
+generateBtn.addEventListener('click', async () => {
+  generateBtn.disabled = true;
+  generateError.classList.remove('show');
   downloads.classList.remove('show');
-  audioPreview.classList.remove('show');
+  viewerContainer.classList.remove('show');
   progress.classList.add('show');
+
+  const column = getSelectedColumn();
+  if (!column) {
+    generateError.textContent = 'Select a column to print.';
+    generateError.classList.add('show');
+    generateBtn.disabled = false;
+    progress.classList.remove('show');
+    return;
+  }
 
   const body = {
     job_id: jobId,
-    column: colDropdown.value,
-    spread: sliderNorm(spreadSlider),
-    speed: sliderNorm(speedSlider),
-    volume: sliderNorm(volumeSlider),
+    column: column,
+    width_mm: parseFloat(widthSlider.value),
+    depth_mm: parseFloat(depthSlider.value),
+    height_scale_mm: parseFloat(heightSlider.value),
+    base_thickness_mm: parseFloat(baseSlider.value),
+    n_points: parseInt(npointsSlider.value),
   };
 
   try {
-    const res = await fetch('/process', {
+    const res = await fetch('/relief', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -502,37 +616,109 @@ processBtn.addEventListener('click', async () => {
     progress.classList.remove('show');
 
     if (!res.ok) {
-      processError.textContent = data.error || 'Processing failed';
-      processError.classList.add('show');
-      processBtn.disabled = false;
+      generateError.textContent = data.error || 'Generation failed';
+      generateError.classList.add('show');
+      generateBtn.disabled = false;
       return;
     }
 
-    // Set download links
-    const base = `/download/${jobId}`;
-    $('#dlWav').href = `${base}/wav`;
-    $('#dlStl').href = `${base}/stl`;
-    $('#dlSettings').href = `${base}/settings`;
-
-    const s = data.settings;
-    $('#dlWav').textContent = `${s.column}_sonified.wav`;
-    $('#wavInfo').textContent = `${s.audio_duration_sec}s · ${s.sample_rate} Hz`;
-
+    // Set download link
+    dlRelief.href = `/download/${jobId}/relief`;
+    dlRelief.textContent = `${column}_relief.stl`;
     downloads.classList.add('show');
 
-    // Audio preview
-    audioPlayer.src = `${base}/wav`;
-    audioPreview.classList.add('show');
+    // Load and display 3D model
+    viewerContainer.classList.add('show');
+    await loadSTLIntoViewer(jobId);
 
-    processBtn.disabled = false;
+    generateBtn.disabled = false;
 
   } catch (e) {
     progress.classList.remove('show');
-    processError.textContent = 'Network error: ' + e.message;
-    processError.classList.add('show');
-    processBtn.disabled = false;
+    generateError.textContent = 'Network error: ' + e.message;
+    generateError.classList.add('show');
+    generateBtn.disabled = false;
   }
 });
+
+// ─── Three.js 3D viewer ─────────────────────────────────────────────────────
+
+function initViewer(canvas) {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(canvas.clientWidth, 350);
+  renderer.setClearColor(0x0a0a12);
+
+  scene = new THREE.Scene();
+
+  camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / 350, 0.1, 5000);
+  camera.position.set(0, 0, 300);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+  const d1 = new THREE.DirectionalLight(0x50b4ff, 1.2);
+  d1.position.set(1, 2, 3);
+  scene.add(d1);
+  const d2 = new THREE.DirectionalLight(0xff8c3c, 0.6);
+  d2.position.set(-2, -1, -1);
+  scene.add(d2);
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+}
+
+async function loadSTLIntoViewer(jobId) {
+  const canvas = $('#stlViewer');
+  if (!renderer) initViewer(canvas);
+
+  try {
+    const res = await fetch(`/download/${jobId}/relief`);
+    if (!res.ok) throw new Error('STL fetch failed');
+    const buf = await res.arrayBuffer();
+
+    const loader = new STLLoader();
+    const geometry = loader.parse(buf);
+    geometry.computeBoundingBox();
+
+    const material = new THREE.MeshPhongMaterial({
+      color: 0x50b4ff,
+      specular: 0x88ccff,
+      shininess: 40,
+      side: THREE.DoubleSide,
+    });
+
+    if (currentMesh) scene.remove(currentMesh);
+    currentMesh = new THREE.Mesh(geometry, material);
+    scene.add(currentMesh);
+
+    // Auto-fit camera
+    const box = new THREE.Box3().setFromObject(currentMesh);
+    const ctr = box.getCenter(new THREE.Vector3());
+    const sz = box.getSize(new THREE.Vector3());
+    const dist = Math.max(sz.x, sz.y, sz.z) * 1.8;
+
+    camera.position.set(ctr.x + dist * 0.4, ctr.y + dist * 0.4, ctr.z + dist);
+    camera.lookAt(ctr);
+    controls.target.copy(ctr);
+    controls.update();
+
+    renderer.setSize(canvas.clientWidth, 350);
+    camera.aspect = canvas.clientWidth / 350;
+    camera.updateProjectionMatrix();
+
+  } catch (e) {
+    generateError.textContent = 'Failed to load 3D model: ' + e.message;
+    generateError.classList.add('show');
+  }
+}
 </script>
 </body>
 </html>

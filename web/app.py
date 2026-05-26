@@ -3,7 +3,8 @@ app.py — Flask web backend for DataSoniPrint.
 
 Endpoints:
     GET  /              → main UI
-    POST /upload        → upload CSV, return column info
+    POST /upload        → upload data file, return column info
+    POST /preview       → quick line chart PNG of a column
     POST /process       → run sonification pipeline, return download links
     GET  /download/<id>/<type> → download WAV / STL / settings JSON
 """
@@ -18,13 +19,15 @@ from pathlib import Path
 from flask import (Flask, request, jsonify, send_file,
                    render_template, session)
 
-from processing import (load_csv, column_stats, process_csv)
+from processing import (load_file, column_stats, process_file,
+                         generate_preview_png, supported_extension,
+                         data_column_to_relief_stl, scale_to_bed)
 
 app = Flask(__name__,
             template_folder="templates",
             static_folder="static")
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", secrets.token_hex(32))
-app.config["MAX_CONTENT_LENGTH"] = 50 * 1024 * 1024  # 50 MB max upload
+app.config["MAX_CONTENT_LENGTH"] = 1 * 1024 * 1024 * 1024  # 1 GB max upload
 
 # In-memory store for processed results (keyed by session job ID).
 # In production, swap for Redis or file-based storage.
@@ -50,7 +53,7 @@ def index():
 
 @app.route("/upload", methods=["POST"])
 def upload():
-    """Upload CSV, return column list + stats."""
+    """Upload data file, return column list + stats."""
     if "file" not in request.files:
         return jsonify({"error": "No file uploaded"}), 400
 
@@ -58,25 +61,24 @@ def upload():
     if not f.filename:
         return jsonify({"error": "Empty filename"}), 400
 
-    # Only allow .csv files
-    if not f.filename.lower().endswith(".csv"):
-        return jsonify({"error": "Only CSV files are supported"}), 400
+    if not supported_extension(f.filename):
+        return jsonify({"error": "Unsupported file format. Accepted: CSV, HDF5, NetCDF, GRIB, ASDF"}), 400
 
     try:
         contents = f.read()
-        stream = io.BytesIO(contents)
-        headers, columns, row_count = load_csv(stream)
+        headers, columns, row_count = load_file(contents, f.filename)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
     stats = column_stats(columns, headers)
 
-    # Store raw CSV bytes in session data
     job_id = secrets.token_hex(12)
     _results[job_id] = {
         "ts": time.time(),
-        "csv_bytes": contents,
+        "file_bytes": contents,
         "filename": f.filename,
+        "headers": headers,
+        "columns_cache": columns,
     }
     _cleanup_old_results()
 
@@ -91,6 +93,112 @@ def upload():
     })
 
 
+@app.route("/preview", methods=["POST"])
+def preview():
+    """Generate a quick line chart preview of a column."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    job_id = data.get("job_id") or session.get("job_id")
+    if not job_id or job_id not in _results:
+        return jsonify({"error": "No file uploaded or session expired"}), 400
+
+    job = _results[job_id]
+    columns = job.get("columns_cache")
+    hdrs = job.get("headers")
+
+    if columns is None or hdrs is None:
+        return jsonify({"error": "Data not found, please re-upload"}), 400
+
+    column = data.get("column")
+    try:
+        png_bytes = generate_preview_png(columns, hdrs, selected_column=column)
+    except Exception as e:
+        return jsonify({"error": f"Preview failed: {e}"}), 500
+
+    return send_file(
+        io.BytesIO(png_bytes),
+        mimetype="image/png",
+        download_name="preview.png",
+    )
+
+
+@app.route("/example")
+def example():
+    """Serve bundled example CSV files for demo purposes."""
+    name = request.args.get("name", "sample")
+    base_dir = Path(__file__).parent.parent
+    if name == "gw":
+        sample_path = base_dir / "web" / "static" / "examples" / "gw_chirp.csv"
+        dl_name = "gw_chirp.csv"
+    else:
+        sample_path = base_dir / "sample_data.csv"
+        dl_name = "sample_data.csv"
+    if not sample_path.exists():
+        return jsonify({"error": "Sample file not found"}), 404
+    return send_file(str(sample_path), mimetype="text/csv",
+                     as_attachment=False, download_name=dl_name)
+
+
+@app.route("/relief", methods=["POST"])
+def relief():
+    """Generate a 3D relief STL from one data column."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    job_id = data.get("job_id") or session.get("job_id")
+    if not job_id or job_id not in _results:
+        return jsonify({"error": "No file uploaded or session expired"}), 400
+
+    job = _results[job_id]
+    columns = job.get("columns_cache")
+    if columns is None:
+        return jsonify({"error": "Column data not available; please re-upload"}), 400
+
+    column = data.get("column")
+    if not column or column not in columns:
+        column = (job.get("headers") or [None])[0]
+    if not column or column not in columns:
+        return jsonify({"error": "No valid column specified"}), 400
+
+    width_mm          = max(10.0, min(float(data.get("width_mm", 180.0)),          200.0))
+    depth_mm          = max(5.0,  min(float(data.get("depth_mm",  20.0)),          200.0))
+    height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  20.0)),    80.0))
+    base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),    20.0))
+    n_points          = max(10,   min(int(data.get("n_points", 200)),              500))
+
+    scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
+
+    try:
+        stl_bytes = data_column_to_relief_stl(
+            columns[column],
+            width_mm=scaled_w,
+            depth_mm=scaled_d,
+            height_scale_mm=height_scale_mm,
+            base_thickness_mm=base_thickness_mm,
+            n_points=n_points,
+        )
+    except Exception as e:
+        return jsonify({"error": f"STL generation failed: {e}"}), 500
+
+    job["relief_stl"] = stl_bytes
+    job["relief_column"] = column
+    job["ts"] = time.time()
+
+    return jsonify({
+        "job_id": job_id,
+        "column": column,
+        "width_mm": round(scaled_w, 2),
+        "depth_mm": round(scaled_d, 2),
+        "height_scale_mm": height_scale_mm,
+        "scale_factor": round(scale_factor, 4),
+        "n_points": n_points,
+        "ready": True,
+    })
+
+
 @app.route("/process", methods=["POST"])
 def process():
     """Run the sonification pipeline with user parameters."""
@@ -100,14 +208,15 @@ def process():
 
     job_id = data.get("job_id") or session.get("job_id")
     if not job_id or job_id not in _results:
-        return jsonify({"error": "No CSV uploaded or session expired"}), 400
+        return jsonify({"error": "No file uploaded or session expired"}), 400
 
     job = _results[job_id]
-    csv_bytes = job.get("csv_bytes")
-    if csv_bytes is None:
-        return jsonify({"error": "CSV data not found, please re-upload"}), 400
+    file_bytes = job.get("file_bytes")
+    if file_bytes is None:
+        return jsonify({"error": "File data not found, please re-upload"}), 400
 
     params = {
+        "columns": data.get("columns", []),
         "column": data.get("column"),
         "spread": data.get("spread", 0.35),
         "speed": data.get("speed", 0.5),
@@ -115,11 +224,13 @@ def process():
     }
 
     try:
-        result = process_csv(io.BytesIO(csv_bytes), params)
+        result = process_file(file_bytes, job["filename"], params)
     except Exception as e:
         return jsonify({"error": f"Processing failed: {e}"}), 500
 
-    # Store outputs for download
+    # Free cached columns to save memory now that we have outputs
+    job.pop("columns_cache", None)
+
     job["wav"] = result["wav"]
     job["stl"] = result["stl"]
     job["settings"] = result["settings"]
@@ -171,6 +282,17 @@ def download(job_id, file_type):
             mimetype="application/json",
             as_attachment=True,
             download_name=f"{base}_settings.json",
+        )
+    elif file_type == "relief":
+        data = job.get("relief_stl")
+        if not data:
+            return jsonify({"error": "Relief STL not ready; call /relief first"}), 404
+        col = job.get("relief_column", "data")
+        return send_file(
+            io.BytesIO(data),
+            mimetype="application/sla",
+            as_attachment=True,
+            download_name=f"{base}_{col}_relief.stl",
         )
     else:
         return jsonify({"error": f"Unknown file type: {file_type}"}), 400
