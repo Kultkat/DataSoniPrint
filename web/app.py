@@ -21,7 +21,8 @@ from flask import (Flask, request, jsonify, send_file,
 
 from processing import (load_file, column_stats, process_file,
                          generate_preview_png, supported_extension,
-                         data_column_to_relief_stl, scale_to_bed)
+                         data_column_to_relief_stl, scale_to_bed,
+                         image_to_relief_stl)
 
 app = Flask(__name__,
             template_folder="templates",
@@ -124,6 +125,47 @@ def preview():
     )
 
 
+@app.route("/upload-image", methods=["POST"])
+def upload_image():
+    """Upload an image file for grayscale relief conversion."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file uploaded"}), 400
+
+    f = request.files["file"]
+    if not f.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    ext = Path(f.filename).suffix.lower()
+    if ext not in {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'}:
+        return jsonify({"error": "Unsupported image format. Accepted: PNG, JPG, GIF, BMP, WebP"}), 400
+
+    try:
+        image_bytes = f.read()
+        # Validate image can be loaded (but don't store it, we'll process on demand)
+        from PIL import Image
+        Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        return jsonify({"error": f"Invalid image: {e}"}), 400
+
+    job_id = secrets.token_hex(12)
+    _results[job_id] = {
+        "ts": time.time(),
+        "file_bytes": image_bytes,
+        "filename": f.filename,
+        "file_type": "image",
+    }
+    _cleanup_old_results()
+
+    session["job_id"] = job_id
+
+    return jsonify({
+        "job_id": job_id,
+        "filename": f.filename,
+        "file_type": "image",
+        "message": "Image uploaded. Brightness will map to height (0-50mm).",
+    })
+
+
 @app.route("/example")
 def example():
     """Serve bundled example CSV files for demo purposes."""
@@ -139,6 +181,55 @@ def example():
         return jsonify({"error": "Sample file not found"}), 404
     return send_file(str(sample_path), mimetype="text/csv",
                      as_attachment=False, download_name=dl_name)
+
+
+@app.route("/image-relief", methods=["POST"])
+def image_relief():
+    """Generate a relief STL from an uploaded image (grayscale → height)."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    job_id = data.get("job_id") or session.get("job_id")
+    if not job_id or job_id not in _results:
+        return jsonify({"error": "No image uploaded or session expired"}), 400
+
+    job = _results[job_id]
+    image_bytes = job.get("file_bytes")
+    if image_bytes is None:
+        return jsonify({"error": "Image data not found; please re-upload"}), 400
+
+    width_mm          = max(10.0, min(float(data.get("width_mm", 150.0)),          200.0))
+    depth_mm          = max(10.0, min(float(data.get("depth_mm",  150.0)),         200.0))
+    height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  50.0)),   50.0))
+    base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
+
+    scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
+
+    try:
+        stl_bytes = image_to_relief_stl(
+            image_bytes,
+            width_mm=scaled_w,
+            depth_mm=scaled_d,
+            height_scale_mm=height_scale_mm,
+            base_thickness_mm=base_thickness_mm,
+        )
+    except Exception as e:
+        return jsonify({"error": f"STL generation failed: {e}"}), 500
+
+    job["relief_stl"] = stl_bytes
+    job["relief_source"] = "image"
+    job["ts"] = time.time()
+
+    return jsonify({
+        "job_id": job_id,
+        "width_mm": round(scaled_w, 2),
+        "depth_mm": round(scaled_d, 2),
+        "height_scale_mm": height_scale_mm,
+        "scale_factor": round(scale_factor, 4),
+        "ready": True,
+        "message": "Image relief generated (brightness → height: 0-50mm)",
+    })
 
 
 @app.route("/relief", methods=["POST"])

@@ -606,6 +606,163 @@ def spectrogram_to_stl_bytes(times, freqs, spec_db,
 
 # ─── Relief STL (direct data → 3D print) ─────────────────────────────────────
 
+def image_to_relief_stl(
+    image_bytes: bytes,
+    width_mm: float = 150.0,
+    depth_mm: float = 150.0,
+    height_scale_mm: float = 50.0,
+    base_thickness_mm: float = 3.0,
+    max_resolution_mm: float = 0.4,
+    max_mp: int = 10,
+) -> bytes:
+    """Convert image (grayscale) to 3D-printable relief STL.
+
+    Brightness → height mapping:
+      - Black (0) → base_thickness_mm
+      - White (255) → base_thickness_mm + height_scale_mm
+
+    Args:
+        image_bytes:        PNG/JPG bytes
+        width_mm:           X extent in mm
+        depth_mm:           Y extent in mm
+        height_scale_mm:    max Z range above base (default 50mm = 5cm)
+        base_thickness_mm:  flat base height (default 3mm)
+        max_resolution_mm:  target pixel size in mm (default 0.4mm)
+        max_mp:             max megapixels (default 10)
+
+    Returns:
+        Binary STL bytes.
+
+    Raises:
+        ValueError: if image is too large or invalid format.
+    """
+    from PIL import Image
+    from stl import mesh as stl_mesh
+
+    # --- 1. Load and validate image ---
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        raise ValueError(f"Failed to load image: {e}")
+
+    w, h = img.size
+    mp = (w * h) / 1_000_000
+    if mp > max_mp:
+        raise ValueError(f"Image too large: {mp:.1f}MP (max {max_mp}MP)")
+
+    # --- 2. Convert to grayscale ---
+    if img.mode != 'L':
+        img = img.convert('L')
+
+    # --- 3. Downsample to printable resolution ---
+    # Target: ~max_resolution_mm per pixel
+    # But keep manageable size for STL (e.g., max ~250×250 pixels)
+    target_px_w = min(int(width_mm / max_resolution_mm), 250)
+    target_px_h = min(int(depth_mm / max_resolution_mm), 250)
+    aspect_ratio = w / h
+    if aspect_ratio > (width_mm / depth_mm):
+        target_px_h = int(target_px_w / aspect_ratio)
+    else:
+        target_px_w = int(target_px_h * aspect_ratio)
+
+    if target_px_w < 10 or target_px_h < 10:
+        target_px_w, target_px_h = 10, 10
+
+    img = img.resize((target_px_w, target_px_h), Image.Resampling.LANCZOS)
+    px_array = np.array(img, dtype=np.float64) / 255.0  # normalize [0, 1]
+
+    n_x, n_y = px_array.shape[1], px_array.shape[0]
+
+    # --- 4. Build vertex grid ---
+    # X: 0 to width_mm, Y: 0 to depth_mm, Z: height from pixel brightness
+    x_scale = width_mm / (n_x - 1) if n_x > 1 else 1.0
+    y_scale = depth_mm / (n_y - 1) if n_y > 1 else 1.0
+
+    vertices = np.zeros((n_y, n_x, 3), dtype=np.float64)
+    for iy in range(n_y):
+        for ix in range(n_x):
+            brightness = px_array[iy, ix]
+            vertices[iy, ix] = [
+                ix * x_scale,
+                iy * y_scale,
+                float(base_thickness_mm) + brightness * float(height_scale_mm),
+            ]
+
+    # --- 5. Triangulate grid into mesh ---
+    tris = []
+    for iy in range(n_y - 1):
+        for ix in range(n_x - 1):
+            v0 = vertices[iy, ix]
+            v1 = vertices[iy, ix + 1]
+            v2 = vertices[iy + 1, ix + 1]
+            v3 = vertices[iy + 1, ix]
+
+            # Two triangles per quad: CCW winding (outward normal)
+            tris.append([v0, v1, v2])
+            tris.append([v0, v2, v3])
+
+    # Bottom surface (flat base at z=0, reversed winding)
+    for iy in range(n_y - 1):
+        for ix in range(n_x - 1):
+            v0 = np.array([vertices[iy, ix, 0], vertices[iy, ix, 1], 0.0])
+            v1 = np.array([vertices[iy, ix + 1, 0], vertices[iy, ix + 1, 1], 0.0])
+            v2 = np.array([vertices[iy + 1, ix + 1, 0], vertices[iy + 1, ix + 1, 1], 0.0])
+            v3 = np.array([vertices[iy + 1, ix, 0], vertices[iy + 1, ix, 1], 0.0])
+
+            tris.append([v0, v3, v2])
+            tris.append([v0, v2, v1])
+
+    # Edge walls (simplified: just the perimeter quads)
+    # Left edge (x=0)
+    for iy in range(n_y - 1):
+        v0 = np.array([0.0, vertices[iy, 0, 1], 0.0])
+        v1 = np.array([0.0, vertices[iy, 0, 1], vertices[iy, 0, 2]])
+        v2 = np.array([0.0, vertices[iy + 1, 0, 1], vertices[iy + 1, 0, 2]])
+        v3 = np.array([0.0, vertices[iy + 1, 0, 1], 0.0])
+        tris.append([v0, v1, v2])
+        tris.append([v0, v2, v3])
+
+    # Right edge (x=width_mm)
+    for iy in range(n_y - 1):
+        v0 = np.array([width_mm, vertices[iy, -1, 1], 0.0])
+        v1 = np.array([width_mm, vertices[iy, -1, 1], vertices[iy, -1, 2]])
+        v2 = np.array([width_mm, vertices[iy + 1, -1, 1], vertices[iy + 1, -1, 2]])
+        v3 = np.array([width_mm, vertices[iy + 1, -1, 1], 0.0])
+        tris.append([v0, v3, v2])
+        tris.append([v0, v2, v1])
+
+    # Front edge (y=0)
+    for ix in range(n_x - 1):
+        v0 = np.array([vertices[0, ix, 0], 0.0, 0.0])
+        v1 = np.array([vertices[0, ix, 0], 0.0, vertices[0, ix, 2]])
+        v2 = np.array([vertices[0, ix + 1, 0], 0.0, vertices[0, ix + 1, 2]])
+        v3 = np.array([vertices[0, ix + 1, 0], 0.0, 0.0])
+        tris.append([v0, v1, v2])
+        tris.append([v0, v2, v3])
+
+    # Back edge (y=depth_mm)
+    for ix in range(n_x - 1):
+        v0 = np.array([vertices[-1, ix, 0], depth_mm, 0.0])
+        v1 = np.array([vertices[-1, ix, 0], depth_mm, vertices[-1, ix, 2]])
+        v2 = np.array([vertices[-1, ix + 1, 0], depth_mm, vertices[-1, ix + 1, 2]])
+        v3 = np.array([vertices[-1, ix + 1, 0], depth_mm, 0.0])
+        tris.append([v0, v3, v2])
+        tris.append([v0, v2, v1])
+
+    tri_array = np.array(tris, dtype=np.float64)
+    n_tris = len(tri_array)
+
+    # --- 6. Build mesh and export ---
+    m = stl_mesh.Mesh(np.zeros(n_tris, dtype=stl_mesh.Mesh.dtype))
+    m.vectors = tri_array
+    m.update_normals()
+
+    buf = io.BytesIO()
+    m.save("relief.stl", fh=buf)
+    buf.seek(0)
+    return buf.read()
+
+
 def scale_to_bed(width_mm: float, depth_mm: float,
                  height_scale_mm: float, max_bed_mm: float = 200.0
                  ) -> tuple:

@@ -295,31 +295,60 @@
   <!-- Step 1: Upload -->
   <div class="card" id="uploadCard">
     <h2>1 &mdash; Upload Data</h2>
-    <div class="upload-zone" id="dropZone">
-      <div class="icon">📁</div>
-      <div><strong>Drop a data file here</strong></div>
-      <p>CSV, HDF5, NetCDF, GRIB, ASDF &middot; max 1 GB</p>
+
+    <!-- Tabs -->
+    <div style="display:flex;gap:10px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px">
+      <button id="tabData" class="tab-btn tab-active" style="padding:8px 16px;background:transparent;border:none;color:var(--accent);cursor:pointer;font-weight:600;border-bottom:2px solid var(--accent);font-size:0.9rem">📊 Data File</button>
+      <button id="tabImage" class="tab-btn" style="padding:8px 16px;background:transparent;border:none;color:var(--dim);cursor:pointer;font-weight:600;border-bottom:2px solid transparent;font-size:0.9rem">🖼️ Image</button>
     </div>
-    <input type="file" id="fileInput" accept=".csv,.h5,.hdf5,.hdf,.nc,.nc4,.netcdf,.grib,.grib2,.grb,.grb2,.asdf">
-    <div class="example-buttons">
-      <button class="btn-example" id="loadSampleBtn">📊 Load Sample CSV</button>
-      <button class="btn-example" id="loadGWBtn">🌊 Load GW Chirp</button>
+
+    <!-- Data Tab -->
+    <div id="tabDataContent" class="tab-content tab-show">
+      <div class="upload-zone" id="dropZone">
+        <div class="icon">📁</div>
+        <div><strong>Drop a data file here</strong></div>
+        <p>CSV, HDF5, NetCDF, GRIB, ASDF &middot; max 1 GB</p>
+      </div>
+      <input type="file" id="fileInput" accept=".csv,.h5,.hdf5,.hdf,.nc,.nc4,.netcdf,.grib,.grib2,.grb,.grb2,.asdf">
+      <div class="example-buttons">
+        <button class="btn-example" id="loadSampleBtn">📊 Load Sample CSV</button>
+        <button class="btn-example" id="loadGWBtn">🌊 Load GW Chirp</button>
+      </div>
+      <div class="file-info" id="fileInfo">
+        <span class="name" id="fileName"></span>&ensp;&mdash;&ensp;
+        <span id="fileMeta"></span>
+      </div>
+      <div class="col-select" id="colSelect">
+        <label style="font-size:0.82rem;color:var(--dim);display:block;margin-bottom:8px">Select column to print:</label>
+        <select id="colDropdown"></select>
+      </div>
+      <div class="stats-table" id="statsTable">
+        <table>
+          <thead><tr><th>Column</th><th>Min</th><th>Max</th><th>Mean</th><th>Count</th></tr></thead>
+          <tbody id="statsBody"></tbody>
+        </table>
+      </div>
+      <div class="error" id="uploadError"></div>
     </div>
-    <div class="file-info" id="fileInfo">
-      <span class="name" id="fileName"></span>&ensp;&mdash;&ensp;
-      <span id="fileMeta"></span>
+
+    <!-- Image Tab -->
+    <div id="tabImageContent" class="tab-content" style="display:none">
+      <div class="upload-zone" id="dropZoneImage">
+        <div class="icon">🖼️</div>
+        <div><strong>Drop an image here</strong></div>
+        <p>PNG, JPG, GIF, BMP, WebP &middot; max 10 MP &middot; Brightness → Height</p>
+      </div>
+      <input type="file" id="fileInputImage" accept=".png,.jpg,.jpeg,.gif,.bmp,.webp">
+      <div class="file-info" id="fileInfoImage">
+        <span class="name" id="fileNameImage"></span>&ensp;&mdash;&ensp;
+        <span id="fileMetaImage"></span>
+      </div>
+      <div style="margin-top:14px;padding:12px;background:rgba(100,255,180,0.08);border-radius:6px;font-size:0.8rem;color:var(--dim)">
+        <strong style="color:var(--accent3)">Grayscale Mapping:</strong> Black (0mm) → White (50mm above base)
+      </div>
+      <div class="error" id="uploadErrorImage"></div>
     </div>
-    <div class="col-select" id="colSelect">
-      <label style="font-size:0.82rem;color:var(--dim);display:block;margin-bottom:8px">Select column to print:</label>
-      <select id="colDropdown"></select>
-    </div>
-    <div class="stats-table" id="statsTable">
-      <table>
-        <thead><tr><th>Column</th><th>Min</th><th>Max</th><th>Mean</th><th>Count</th></tr></thead>
-        <tbody id="statsBody"></tbody>
-      </table>
-    </div>
-    <div class="error" id="uploadError"></div>
+
   </div>
 
   <!-- Step 2: Configure Relief -->
@@ -482,7 +511,38 @@ npointsSlider.addEventListener('input', () => {
   npointsVal.textContent = npointsSlider.value + ' pts';
 });
 
+// ─── Tabs ───────────────────────────────────────────────────────────────────
+
+$('#tabData').addEventListener('click', () => {
+  $('#tabDataContent').style.display = 'block';
+  $('#tabImageContent').style.display = 'none';
+  $('#tabData').classList.add('tab-active');
+  $('#tabImage').classList.remove('tab-active');
+  $('#tabData').style.color = 'var(--accent)';
+  $('#tabImage').style.color = 'var(--dim)';
+  $('#tabData').style.borderBottomColor = 'var(--accent)';
+  $('#tabImage').style.borderBottomColor = 'transparent';
+});
+
+$('#tabImage').addEventListener('click', () => {
+  $('#tabDataContent').style.display = 'none';
+  $('#tabImageContent').style.display = 'block';
+  $('#tabImage').classList.add('tab-active');
+  $('#tabData').classList.remove('tab-active');
+  $('#tabImage').style.color = 'var(--accent)';
+  $('#tabData').style.color = 'var(--dim)';
+  $('#tabImage').style.borderBottomColor = 'var(--accent)';
+  $('#tabData').style.borderBottomColor = 'transparent';
+});
+
 // ─── File upload ────────────────────────────────────────────────────────────
+
+const dropZoneImage = $('#dropZoneImage');
+const fileInputImage = $('#fileInputImage');
+const fileInfoImage = $('#fileInfoImage');
+const fileNameImage = $('#fileNameImage');
+const fileMetaImage = $('#fileMetaImage');
+const uploadErrorImage = $('#uploadErrorImage');
 
 dropZone.addEventListener('dragover', e => {
   e.preventDefault();
@@ -497,6 +557,22 @@ dropZone.addEventListener('drop', e => {
 dropZone.addEventListener('click', () => fileInput.click());
 fileInput.addEventListener('change', () => {
   if (fileInput.files.length) handleFile(fileInput.files[0]);
+});
+
+// Image upload
+dropZoneImage.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZoneImage.classList.add('drag');
+});
+dropZoneImage.addEventListener('dragleave', () => dropZoneImage.classList.remove('drag'));
+dropZoneImage.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZoneImage.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleImageFile(e.dataTransfer.files[0]);
+});
+dropZoneImage.addEventListener('click', () => fileInputImage.click());
+fileInputImage.addEventListener('change', () => {
+  if (fileInputImage.files.length) handleImageFile(fileInputImage.files[0]);
 });
 
 $('#loadSampleBtn').addEventListener('click', async () => {
@@ -542,6 +618,7 @@ async function handleFile(file) {
 
     jobId = data.job_id;
     headers = data.headers;
+    window.uploadMode = 'data'; // Track mode for generateBtn
 
     // Show file info
     fileName.textContent = data.filename;
@@ -582,6 +659,52 @@ async function handleFile(file) {
   }
 }
 
+async function handleImageFile(file) {
+  uploadErrorImage.classList.remove('show');
+  generateError.classList.remove('show');
+  downloads.classList.remove('show');
+  viewerContainer.classList.remove('show');
+
+  const allowedExt = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp'];
+  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  if (!allowedExt.includes(ext)) {
+    uploadErrorImage.textContent = 'Unsupported format. Accepted: PNG, JPG, GIF, BMP, WebP';
+    uploadErrorImage.classList.add('show');
+    return;
+  }
+
+  const form = new FormData();
+  form.append('file', file);
+
+  try {
+    const res = await fetch('/upload-image', { method: 'POST', body: form });
+    const data = await res.json();
+
+    if (!res.ok) {
+      uploadErrorImage.textContent = data.error || 'Upload failed';
+      uploadErrorImage.classList.add('show');
+      return;
+    }
+
+    jobId = data.job_id;
+    window.uploadMode = 'image'; // Track mode for generateBtn
+
+    // Show file info
+    fileNameImage.textContent = data.filename;
+    fileMetaImage.textContent = `Image · ${data.message}`;
+    fileInfoImage.classList.add('show');
+
+    // Enable controls (no column selector for images)
+    sliders.classList.add('show');
+    actions.classList.add('show');
+    generateBtn.disabled = false;
+
+  } catch (e) {
+    uploadErrorImage.textContent = 'Network error: ' + e.message;
+    uploadErrorImage.classList.add('show');
+  }
+}
+
 // ─── Generate relief ────────────────────────────────────────────────────────
 
 generateBtn.addEventListener('click', async () => {
@@ -591,27 +714,35 @@ generateBtn.addEventListener('click', async () => {
   viewerContainer.classList.remove('show');
   progress.classList.add('show');
 
-  const column = getSelectedColumn();
-  if (!column) {
-    generateError.textContent = 'Select a column to print.';
-    generateError.classList.add('show');
-    generateBtn.disabled = false;
-    progress.classList.remove('show');
-    return;
-  }
+  // Determine which endpoint to call
+  const isImage = window.uploadMode === 'image';
+  const endpoint = isImage ? '/image-relief' : '/relief';
+  const endpoint_label = isImage ? 'Image Relief' : 'Data Relief';
 
   const body = {
     job_id: jobId,
-    column: column,
     width_mm: parseFloat(widthSlider.value),
     depth_mm: parseFloat(depthSlider.value),
     height_scale_mm: parseFloat(heightSlider.value),
     base_thickness_mm: parseFloat(baseSlider.value),
-    n_points: parseInt(npointsSlider.value),
   };
 
+  // Data mode: add column and n_points
+  if (!isImage) {
+    const column = getSelectedColumn();
+    if (!column) {
+      generateError.textContent = 'Select a column to print.';
+      generateError.classList.add('show');
+      generateBtn.disabled = false;
+      progress.classList.remove('show');
+      return;
+    }
+    body.column = column;
+    body.n_points = parseInt(npointsSlider.value);
+  }
+
   try {
-    const res = await fetch('/relief', {
+    const res = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -628,8 +759,9 @@ generateBtn.addEventListener('click', async () => {
     }
 
     // Set download link
+    const label = isImage ? 'image_relief.stl' : `${body.column}_relief.stl`;
     dlRelief.href = `/download/${jobId}/relief`;
-    dlRelief.textContent = `${column}_relief.stl`;
+    dlRelief.textContent = label;
     downloads.classList.add('show');
 
     // Load and display 3D model
