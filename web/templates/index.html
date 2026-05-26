@@ -363,7 +363,7 @@
         <span id="fileMetaImage"></span>
       </div>
       <div style="margin-top:14px;padding:12px;background:rgba(100,255,180,0.08);border-radius:6px;font-size:0.8rem;color:var(--dim)">
-        <strong style="color:var(--accent3)">Grayscale Mapping:</strong> Black (0mm) → White (50mm above base)
+        <strong style="color:var(--accent3)">Grayscale Mapping:</strong> Black (0mm) → White (up to 200mm above base) · Aspect ratio preserved
       </div>
       <div class="error" id="uploadErrorImage"></div>
     </div>
@@ -386,12 +386,12 @@
       </div>
       <div class="slider-row">
         <label>Height Scale</label>
-        <input type="range" id="heightSlider" min="5" max="40" value="20">
-        <span class="val" id="heightVal">20 mm</span>
+        <input type="range" id="heightSlider" min="5" max="200" value="100">
+        <span class="val" id="heightVal">100 mm</span>
       </div>
       <div class="slider-row">
         <label>Base Thickness</label>
-        <input type="range" id="baseSlider" min="2" max="6" value="3">
+        <input type="range" id="baseSlider" min="2" max="10" value="3">
         <span class="val" id="baseVal">3 mm</span>
       </div>
       <div class="slider-row">

@@ -608,24 +608,26 @@ def spectrogram_to_stl_bytes(times, freqs, spec_db,
 
 def image_to_relief_stl(
     image_bytes: bytes,
-    width_mm: float = 150.0,
-    depth_mm: float = 150.0,
-    height_scale_mm: float = 50.0,
+    width_mm: float = 200.0,
+    depth_mm: float = 200.0,
+    height_scale_mm: float = 200.0,
     base_thickness_mm: float = 3.0,
     max_resolution_mm: float = 0.4,
     max_mp: int = 10,
 ) -> bytes:
     """Convert image (grayscale) to 3D-printable relief STL.
 
-    Brightness → height mapping:
+    Brightness → height mapping (Z-axis only):
       - Black (0) → base_thickness_mm
       - White (255) → base_thickness_mm + height_scale_mm
 
+    X/Y preserved aspect ratio (no skew). Max volume: 200×200×200mm.
+
     Args:
         image_bytes:        PNG/JPG bytes
-        width_mm:           X extent in mm
-        depth_mm:           Y extent in mm
-        height_scale_mm:    max Z range above base (default 50mm = 5cm)
+        width_mm:           max X extent in mm (auto-scales to preserve aspect)
+        depth_mm:           max Y extent in mm (auto-scales to preserve aspect)
+        height_scale_mm:    max Z range above base (0-200mm for grayscale)
         base_thickness_mm:  flat base height (default 3mm)
         max_resolution_mm:  target pixel size in mm (default 0.4mm)
         max_mp:             max megapixels (default 10)
@@ -645,8 +647,8 @@ def image_to_relief_stl(
     except Exception as e:
         raise ValueError(f"Failed to load image: {e}")
 
-    w, h = img.size
-    mp = (w * h) / 1_000_000
+    img_w, img_h = img.size
+    mp = (img_w * img_h) / 1_000_000
     if mp > max_mp:
         raise ValueError(f"Image too large: {mp:.1f}MP (max {max_mp}MP)")
 
@@ -654,16 +656,27 @@ def image_to_relief_stl(
     if img.mode != 'L':
         img = img.convert('L')
 
-    # --- 3. Downsample to printable resolution ---
-    # Target: ~max_resolution_mm per pixel
-    # But keep manageable size for STL (e.g., max ~250×250 pixels)
-    target_px_w = min(int(width_mm / max_resolution_mm), 250)
-    target_px_h = min(int(depth_mm / max_resolution_mm), 250)
-    aspect_ratio = w / h
-    if aspect_ratio > (width_mm / depth_mm):
-        target_px_h = int(target_px_w / aspect_ratio)
+    # --- 3. Scale image to fit bed while preserving aspect ratio (no skew) ---
+    img_aspect = img_w / img_h
+    bed_aspect = width_mm / depth_mm
+
+    # Calculate actual dimensions that preserve aspect ratio and fit bed
+    if img_aspect > bed_aspect:
+        # Image wider than bed ratio → constrain by width
+        actual_width = width_mm
+        actual_depth = width_mm / img_aspect
     else:
-        target_px_w = int(target_px_h * aspect_ratio)
+        # Image taller/same → constrain by depth
+        actual_depth = depth_mm
+        actual_width = depth_mm * img_aspect
+
+    # Ensure both fit within max bed size
+    actual_width = min(actual_width, 200.0)
+    actual_depth = min(actual_depth, 200.0)
+
+    # --- 4. Downsample to printable resolution ---
+    target_px_w = min(int(actual_width / max_resolution_mm), 250)
+    target_px_h = min(int(actual_depth / max_resolution_mm), 250)
 
     if target_px_w < 10 or target_px_h < 10:
         target_px_w, target_px_h = 10, 10
@@ -673,10 +686,10 @@ def image_to_relief_stl(
 
     n_x, n_y = px_array.shape[1], px_array.shape[0]
 
-    # --- 4. Build vertex grid ---
-    # X: 0 to width_mm, Y: 0 to depth_mm, Z: height from pixel brightness
-    x_scale = width_mm / (n_x - 1) if n_x > 1 else 1.0
-    y_scale = depth_mm / (n_y - 1) if n_y > 1 else 1.0
+    # --- 5. Build vertex grid ---
+    # X: 0 to actual_width, Y: 0 to actual_depth, Z: height from pixel brightness
+    x_scale = actual_width / (n_x - 1) if n_x > 1 else 1.0
+    y_scale = actual_depth / (n_y - 1) if n_y > 1 else 1.0
 
     vertices = np.zeros((n_y, n_x, 3), dtype=np.float64)
     for iy in range(n_y):
@@ -688,7 +701,7 @@ def image_to_relief_stl(
                 float(base_thickness_mm) + brightness * float(height_scale_mm),
             ]
 
-    # --- 5. Triangulate grid into mesh ---
+    # --- 6. Triangulate grid into mesh ---
     tris = []
     for iy in range(n_y - 1):
         for ix in range(n_x - 1):
@@ -722,12 +735,12 @@ def image_to_relief_stl(
         tris.append([v0, v1, v2])
         tris.append([v0, v2, v3])
 
-    # Right edge (x=width_mm)
+    # Right edge (x=actual_width)
     for iy in range(n_y - 1):
-        v0 = np.array([width_mm, vertices[iy, -1, 1], 0.0])
-        v1 = np.array([width_mm, vertices[iy, -1, 1], vertices[iy, -1, 2]])
-        v2 = np.array([width_mm, vertices[iy + 1, -1, 1], vertices[iy + 1, -1, 2]])
-        v3 = np.array([width_mm, vertices[iy + 1, -1, 1], 0.0])
+        v0 = np.array([actual_width, vertices[iy, -1, 1], 0.0])
+        v1 = np.array([actual_width, vertices[iy, -1, 1], vertices[iy, -1, 2]])
+        v2 = np.array([actual_width, vertices[iy + 1, -1, 1], vertices[iy + 1, -1, 2]])
+        v3 = np.array([actual_width, vertices[iy + 1, -1, 1], 0.0])
         tris.append([v0, v3, v2])
         tris.append([v0, v2, v1])
 
@@ -740,12 +753,12 @@ def image_to_relief_stl(
         tris.append([v0, v1, v2])
         tris.append([v0, v2, v3])
 
-    # Back edge (y=depth_mm)
+    # Back edge (y=actual_depth)
     for ix in range(n_x - 1):
-        v0 = np.array([vertices[-1, ix, 0], depth_mm, 0.0])
-        v1 = np.array([vertices[-1, ix, 0], depth_mm, vertices[-1, ix, 2]])
-        v2 = np.array([vertices[-1, ix + 1, 0], depth_mm, vertices[-1, ix + 1, 2]])
-        v3 = np.array([vertices[-1, ix + 1, 0], depth_mm, 0.0])
+        v0 = np.array([vertices[-1, ix, 0], actual_depth, 0.0])
+        v1 = np.array([vertices[-1, ix, 0], actual_depth, vertices[-1, ix, 2]])
+        v2 = np.array([vertices[-1, ix + 1, 0], actual_depth, vertices[-1, ix + 1, 2]])
+        v3 = np.array([vertices[-1, ix + 1, 0], actual_depth, 0.0])
         tris.append([v0, v3, v2])
         tris.append([v0, v2, v1])
 

@@ -199,9 +199,9 @@ def image_relief():
     if image_bytes is None:
         return jsonify({"error": "Image data not found; please re-upload"}), 400
 
-    width_mm          = max(10.0, min(float(data.get("width_mm", 150.0)),          200.0))
-    depth_mm          = max(10.0, min(float(data.get("depth_mm",  150.0)),         200.0))
-    height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  50.0)),   50.0))
+    width_mm          = max(10.0, min(float(data.get("width_mm", 200.0)),          200.0))
+    depth_mm          = max(10.0, min(float(data.get("depth_mm",  200.0)),         200.0))
+    height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm", 100.0)),   200.0))
     base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
 
     scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
