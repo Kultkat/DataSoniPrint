@@ -272,6 +272,25 @@
   }
   .error.show { display: block; }
 
+  /* Tabs */
+  .tab-btn {
+    padding: 8px 16px;
+    background: transparent;
+    border: none;
+    color: var(--dim);
+    cursor: pointer;
+    font-weight: 600;
+    border-bottom: 2px solid transparent;
+    font-size: 0.9rem;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .tab-btn.tab-active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-content { display: none; }
+  .tab-content.tab-show { display: block; }
+
   footer {
     margin-top: auto;
     padding: 16px 32px;
