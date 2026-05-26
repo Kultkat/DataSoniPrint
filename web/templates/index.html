@@ -95,25 +95,6 @@
   .upload-zone .icon { font-size: 2rem; }
   #fileInput { display: none; }
 
-  .example-buttons {
-    display: flex;
-    gap: 10px;
-    margin-top: 14px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  .btn-example {
-    padding: 10px 20px;
-    background: transparent;
-    border: 1px solid var(--accent);
-    color: var(--accent);
-    border-radius: 6px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    transition: background 0.15s;
-  }
-  .btn-example:hover { background: rgba(80, 180, 255, 0.1); }
-
   .file-info {
     display: none;
     margin-top: 14px;
@@ -300,6 +281,43 @@
     width: 100%;
     text-align: center;
   }
+
+  .archive-item {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .archive-item:hover {
+    border-color: var(--accent);
+    background: rgba(80, 180, 255, 0.05);
+    transform: translateY(-2px);
+  }
+  .archive-item-thumb {
+    width: 100%;
+    height: 120px;
+    background: var(--bg);
+    border-radius: 6px;
+    object-fit: contain;
+    border: 1px solid var(--border);
+  }
+  .archive-item-name {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .archive-item-meta {
+    font-size: 0.7rem;
+    color: var(--dim);
+  }
 </style>
 </head>
 <body>
@@ -329,10 +347,6 @@
         <p>CSV, HDF5, NetCDF, GRIB, ASDF &middot; max 1 GB</p>
       </div>
       <input type="file" id="fileInput" accept=".csv,.h5,.hdf5,.hdf,.nc,.nc4,.netcdf,.grib,.grib2,.grb,.grb2,.asdf">
-      <div class="example-buttons">
-        <button class="btn-example" id="loadSampleBtn">📊 Load Sample CSV</button>
-        <button class="btn-example" id="loadGWBtn">🌊 Load GW Chirp</button>
-      </div>
       <div class="file-info" id="fileInfo">
         <span class="name" id="fileName"></span>&ensp;&mdash;&ensp;
         <span id="fileMeta"></span>
@@ -432,6 +446,14 @@
         <a id="dlRelief" href="#">Download Relief STL</a>
         <span style="color:var(--dim);font-size:0.8rem" id="reliefInfo">Ready to print</span>
       </div>
+    </div>
+  </div>
+
+  <!-- Archive of Recent Uploads -->
+  <div class="card" id="archiveCard" style="margin-top:32px">
+    <h2>📚 Upload Archive</h2>
+    <div id="archiveGrid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:16px;margin-top:16px">
+      <p id="noArchive" style="grid-column:1/-1;color:var(--dim);font-size:0.9rem">No uploads yet. Try uploading a file above.</p>
     </div>
   </div>
 
@@ -598,20 +620,6 @@ fileInputImage.addEventListener('change', () => {
   if (fileInputImage.files.length) handleImageFile(fileInputImage.files[0]);
 });
 
-$('#loadSampleBtn').addEventListener('click', async () => {
-  const res = await fetch('/example?name=sample');
-  const blob = await res.blob();
-  const file = new File([blob], 'sample_data.csv', { type: 'text/csv' });
-  handleFile(file);
-});
-
-$('#loadGWBtn').addEventListener('click', async () => {
-  const res = await fetch('/example?name=gw');
-  const blob = await res.blob();
-  const file = new File([blob], 'gw_chirp.csv', { type: 'text/csv' });
-  handleFile(file);
-});
-
 async function handleFile(file) {
   uploadError.classList.remove('show');
   generateError.classList.remove('show');
@@ -676,6 +684,9 @@ async function handleFile(file) {
     actions.classList.add('show');
     generateBtn.disabled = false;
 
+    // Save to archive
+    saveToArchive(data.filename, 'data', null);
+
   } catch (e) {
     uploadError.textContent = 'Network error: ' + e.message;
     uploadError.classList.add('show');
@@ -721,6 +732,9 @@ async function handleImageFile(file) {
     sliders.classList.add('show');
     actions.classList.add('show');
     generateBtn.disabled = false;
+
+    // Save to archive
+    saveToArchive(data.filename, 'image', null);
 
   } catch (e) {
     uploadErrorImage.textContent = 'Network error: ' + e.message;
@@ -806,6 +820,46 @@ generateBtn.addEventListener('click', async () => {
     generateBtn.disabled = false;
   }
 });
+
+// ─── Archive Management ──────────────────────────────────────────────────────
+
+function saveToArchive(filename, type, data) {
+  try {
+    const archive = JSON.parse(localStorage.getItem('soniArchive') || '[]');
+    const timestamp = new Date().toISOString().split('T')[0];
+    const entry = { filename, type, timestamp, dataSize: data ? data.length : 0 };
+    archive.unshift(entry);  // Add to front
+    if (archive.length > 20) archive.pop();  // Keep last 20
+    localStorage.setItem('soniArchive', JSON.stringify(archive));
+    updateArchiveDisplay();
+  } catch (e) {
+    console.warn('Archive save failed:', e);
+  }
+}
+
+function updateArchiveDisplay() {
+  const archiveGrid = $('#archiveGrid');
+  const noArchive = $('#noArchive');
+  const archive = JSON.parse(localStorage.getItem('soniArchive') || '[]');
+
+  if (archive.length === 0) {
+    archiveGrid.innerHTML = '<p id="noArchive" style="grid-column:1/-1;color:var(--dim);font-size:0.9rem">No uploads yet. Try uploading a file above.</p>';
+    return;
+  }
+
+  noArchive.style.display = 'none';
+  archiveGrid.innerHTML = archive.map((item, idx) => `
+    <div class="archive-item">
+      <div style="font-size:1.5rem">${item.type === 'data' ? '📊' : '🖼️'}</div>
+      <div class="archive-item-name" title="${item.filename}">${item.filename}</div>
+      <div class="archive-item-meta">${item.timestamp}</div>
+      <div class="archive-item-meta" style="font-size:0.65rem">${(item.dataSize / 1024).toFixed(0)} KB</div>
+    </div>
+  `).join('');
+}
+
+// Load archive on page load
+updateArchiveDisplay();
 
 // ─── Three.js 3D viewer ─────────────────────────────────────────────────────
 
