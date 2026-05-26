@@ -394,6 +394,11 @@ import * as THREE from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+if (!THREE || !STLLoader || !OrbitControls) {
+  console.error('❌ Three.js modules failed to load from CDN');
+  document.body.innerHTML += '<div style="color:red;padding:20px">Error: 3D viewer library failed to load. Try clearing browser cache or using a different browser.</div>';
+}
+
 // ─── Global state ───────────────────────────────────────────────────────────
 
 let jobId = null;
@@ -677,15 +682,32 @@ function initViewer(canvas) {
 
 async function loadSTLIntoViewer(jobId) {
   const canvas = $('#stlViewer');
-  if (!renderer) initViewer(canvas);
+  if (!canvas) {
+    console.error('❌ STL canvas not found');
+    return;
+  }
+
+  if (!renderer) {
+    try {
+      initViewer(canvas);
+    } catch (e) {
+      console.error('❌ Failed to init viewer:', e);
+      generateError.textContent = 'Failed to initialize 3D viewer: ' + e.message;
+      generateError.classList.add('show');
+      return;
+    }
+  }
 
   try {
+    console.log('Fetching STL for job:', jobId);
     const res = await fetch(`/download/${jobId}/relief`);
-    if (!res.ok) throw new Error('STL fetch failed');
+    if (!res.ok) throw new Error('STL fetch failed: ' + res.status);
     const buf = await res.arrayBuffer();
+    console.log('STL loaded:', buf.byteLength, 'bytes');
 
     const loader = new STLLoader();
     const geometry = loader.parse(buf);
+    console.log('Geometry parsed');
     geometry.computeBoundingBox();
 
     const material = new THREE.MeshPhongMaterial({
@@ -715,8 +737,11 @@ async function loadSTLIntoViewer(jobId) {
     camera.updateProjectionMatrix();
 
   } catch (e) {
+    console.error('❌ Error loading STL:', e);
     generateError.textContent = 'Failed to load 3D model: ' + e.message;
     generateError.classList.add('show');
+    progress.classList.remove('show');
+    generateBtn.disabled = false;
   }
 }
 </script>
