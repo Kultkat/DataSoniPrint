@@ -204,6 +204,7 @@ def image_relief():
     height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm", 100.0)),   200.0))
     base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
     invert_brightness = bool(data.get("invert_brightness", False))
+    spread            = max(0.5, min(float(data.get("spread", 1.0)),               3.0))
 
     scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
 
@@ -215,6 +216,7 @@ def image_relief():
             height_scale_mm=height_scale_mm,
             base_thickness_mm=base_thickness_mm,
             invert_brightness=invert_brightness,
+            spread=spread,
         )
     except Exception as e:
         return jsonify({"error": f"STL generation failed: {e}"}), 500

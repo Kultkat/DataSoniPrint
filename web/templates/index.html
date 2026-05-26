@@ -412,6 +412,14 @@
         <input type="range" id="baseSlider" min="2" max="10" value="3">
         <span class="val" id="baseVal">3 mm</span>
       </div>
+      <div class="slider-row" id="spreadRow" style="display:none">
+        <label id="spreadLabel">Spread (contrast)</label>
+        <input type="range" id="spreadSlider" min="0.5" max="3" step="0.1" value="1">
+        <span class="val" id="spreadVal">1.0</span>
+      </div>
+      <div style="display:none;font-size:0.75rem;color:var(--dim);padding:0 0 8px 0;margin-top:-6px" id="spreadHint">
+        0.5 = braille bumps • 1.0 = normal • 2.0+ = sharp spikes
+      </div>
       <div class="slider-row">
         <label>Resolution</label>
         <input type="range" id="npointsSlider" min="50" max="500" value="200">
@@ -555,6 +563,9 @@ baseSlider.addEventListener('input', () => {
 npointsSlider.addEventListener('input', () => {
   npointsVal.textContent = npointsSlider.value + ' pts';
 });
+$('#spreadSlider').addEventListener('input', () => {
+  $('#spreadVal').textContent = parseFloat($('#spreadSlider').value).toFixed(1);
+});
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
@@ -651,6 +662,12 @@ async function handleFile(file) {
     headers = data.headers;
     window.uploadMode = 'data'; // Track mode for generateBtn
 
+    // Update slider labels for data mode
+    document.querySelectorAll('.slider-row label')[0].textContent = 'Width';
+    document.querySelectorAll('.slider-row label')[1].textContent = 'Depth';
+    $('#spreadRow').style.display = 'none';
+    $('#spreadHint').style.display = 'none';
+
     // Show file info
     fileName.textContent = data.filename;
     fileMeta.textContent = `${data.row_count} rows · ${data.headers.length} numeric columns`;
@@ -723,6 +740,12 @@ async function handleImageFile(file) {
     jobId = data.job_id;
     window.uploadMode = 'image'; // Track mode for generateBtn
 
+    // Update slider labels for image mode (X/Y instead of Width/Depth)
+    document.querySelectorAll('.slider-row label')[0].textContent = 'X (mm)';
+    document.querySelectorAll('.slider-row label')[1].textContent = 'Y (mm)';
+    $('#spreadRow').style.display = 'block';
+    $('#spreadHint').style.display = 'block';
+
     // Show file info
     fileNameImage.textContent = data.filename;
     fileMetaImage.textContent = `Image · ${data.message}`;
@@ -764,10 +787,11 @@ generateBtn.addEventListener('click', async () => {
     base_thickness_mm: parseFloat(baseSlider.value),
   };
 
-  // Image mode: add brightness inversion toggle
+  // Image mode: add brightness inversion toggle and spread
   if (isImage) {
     const invertBrightnessCheckbox = $('#invertBrightnessCheckbox');
     body.invert_brightness = invertBrightnessCheckbox.checked;
+    body.spread = parseFloat($('#spreadSlider').value);
   }
 
   // Data mode: add column and n_points

@@ -615,12 +615,17 @@ def image_to_relief_stl(
     max_resolution_mm: float = 0.2,
     max_mp: int = 10,
     invert_brightness: bool = False,
+    spread: float = 1.0,
 ) -> bytes:
     """Convert image (grayscale) to 3D-printable relief STL.
 
     Brightness → height mapping (Z-axis only):
       - Normal: Black (0) → base_thickness_mm, White (255) → base + height_scale_mm
       - Inverted: White (0) → base_thickness_mm, Black (255) → base + height_scale_mm
+      - Spread (power law): brightness^spread amplifies or compresses contrast
+        - spread=0.5: braille-like small bumps (compressed)
+        - spread=1.0: linear mapping (normal)
+        - spread=2.0+: sharp spikes (amplified contrast)
 
     X/Y preserved aspect ratio (no skew). Max volume: 200×200×200mm.
 
@@ -701,10 +706,12 @@ def image_to_relief_stl(
     for iy in range(n_y):
         for ix in range(n_x):
             brightness = px_array[iy, ix]
+            # Apply spread function: brightness^spread amplifies or compresses contrast
+            brightness_spread = brightness ** float(spread)
             vertices[iy, ix] = [
                 ix * x_scale,
                 iy * y_scale,
-                float(base_thickness_mm) + brightness * float(height_scale_mm),
+                float(base_thickness_mm) + brightness_spread * float(height_scale_mm),
             ]
 
     # --- 6. Triangulate grid into mesh ---
