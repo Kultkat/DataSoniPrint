@@ -715,6 +715,7 @@ async function handleFile(file) {
     document.querySelectorAll('.slider-row label')[1].textContent = 'Depth';
     $('#spreadRow').style.display = 'none';
     $('#spreadHint').style.display = 'none';
+    colSelect.classList.add('show');  // Show column selector for data mode
 
     // Show file info
     fileName.textContent = data.filename;
@@ -996,6 +997,14 @@ loadFormulaBtn.addEventListener('click', async () => {
     window.uploadMode = 'formula';
     jobId = data.job_id;
 
+    // Update slider labels for formula mode (X/Y/Z instead of Width/Depth)
+    document.querySelectorAll('.slider-row label')[0].textContent = 'X (mm)';
+    document.querySelectorAll('.slider-row label')[1].textContent = 'Y (mm)';
+    document.querySelectorAll('.slider-row label')[2].textContent = 'Z Height';
+    $('#spreadRow').style.display = 'none';
+    $('#spreadHint').style.display = 'none';
+    colSelect.classList.remove('show');  // Hide column selector for formula mode
+
     sliders.classList.add('show');
     actions.classList.add('show');
     generateBtn.disabled = false;
@@ -1059,7 +1068,7 @@ function initViewer(canvas) {
   scene = new THREE.Scene();
 
   camera = new THREE.PerspectiveCamera(45, canvas.clientWidth / 350, 0.1, 5000);
-  camera.position.set(0, 0, 300);
+  camera.position.set(100, 100, 200);  // Table-top perspective: from above and angled
 
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -1127,9 +1136,10 @@ async function loadSTLIntoViewer(jobId) {
     const box = new THREE.Box3().setFromObject(currentMesh);
     const ctr = box.getCenter(new THREE.Vector3());
     const sz = box.getSize(new THREE.Vector3());
-    const dist = Math.max(sz.x, sz.y, sz.z) * 1.8;
+    const dist = Math.max(sz.x, sz.y, sz.z) * 1.5;
 
-    camera.position.set(ctr.x + dist * 0.4, ctr.y + dist * 0.4, ctr.z + dist);
+    // Table-top perspective: mostly from above, slight angle for depth
+    camera.position.set(ctr.x + dist * 0.3, ctr.y + dist * 0.3, ctr.z + dist * 1.2);
     camera.lookAt(ctr);
     controls.target.copy(ctr);
     controls.update();

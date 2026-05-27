@@ -22,7 +22,7 @@ from flask import (Flask, request, jsonify, send_file,
 from processing import (load_file, column_stats, process_file,
                          generate_preview_png, supported_extension,
                          data_column_to_relief_stl, scale_to_bed,
-                         image_to_relief_stl)
+                         image_to_relief_stl, formula_grid_to_relief_stl)
 
 app = Flask(__name__,
             template_folder="templates",
@@ -256,8 +256,25 @@ def relief():
         formula_data = job.get("formula_data")
         if formula_data is None:
             return jsonify({"error": "Formula data not available"}), 400
-        # Flatten 2D formula grid to 1D for relief generation
-        column_data = np.mean(formula_data, axis=0) if len(formula_data.shape) == 2 else formula_data
+
+        # Formula data is 2D grid — use dedicated converter
+        width_mm          = max(10.0, min(float(data.get("width_mm", 200.0)),          200.0))
+        depth_mm          = max(10.0, min(float(data.get("depth_mm",  200.0)),         200.0))
+        height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  50.0)),   200.0))
+        base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
+
+        scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
+
+        try:
+            stl_bytes = formula_grid_to_relief_stl(
+                formula_data,
+                width_mm=scaled_w,
+                depth_mm=scaled_d,
+                height_scale_mm=height_scale_mm,
+                base_thickness_mm=base_thickness_mm,
+            )
+        except Exception as e:
+            return jsonify({"error": f"STL generation failed: {e}"}), 500
     else:
         # Standard column-based data
         columns = job.get("columns_cache")
@@ -271,25 +288,25 @@ def relief():
             return jsonify({"error": "No valid column specified"}), 400
         column_data = columns[column]
 
-    width_mm          = max(10.0, min(float(data.get("width_mm", 180.0)),          200.0))
-    depth_mm          = max(5.0,  min(float(data.get("depth_mm",  20.0)),          200.0))
-    height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  20.0)),    80.0))
-    base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),    20.0))
-    n_points          = max(10,   min(int(data.get("n_points", 200)),              500))
+        width_mm          = max(10.0, min(float(data.get("width_mm", 180.0)),          200.0))
+        depth_mm          = max(5.0,  min(float(data.get("depth_mm",  20.0)),          200.0))
+        height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  20.0)),    80.0))
+        base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),    20.0))
+        n_points          = max(10,   min(int(data.get("n_points", 200)),              500))
 
-    scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
+        scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
 
-    try:
-        stl_bytes = data_column_to_relief_stl(
-            column_data,
-            width_mm=scaled_w,
-            depth_mm=scaled_d,
-            height_scale_mm=height_scale_mm,
-            base_thickness_mm=base_thickness_mm,
-            n_points=n_points,
-        )
-    except Exception as e:
-        return jsonify({"error": f"STL generation failed: {e}"}), 500
+        try:
+            stl_bytes = data_column_to_relief_stl(
+                column_data,
+                width_mm=scaled_w,
+                depth_mm=scaled_d,
+                height_scale_mm=height_scale_mm,
+                base_thickness_mm=base_thickness_mm,
+                n_points=n_points,
+            )
+        except Exception as e:
+            return jsonify({"error": f"STL generation failed: {e}"}), 500
 
     job["relief_stl"] = stl_bytes
     if job.get("file_type") == "formula":

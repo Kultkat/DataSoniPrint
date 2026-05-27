@@ -1086,3 +1086,121 @@ def evaluate_formula(formula_str: str, resolution: int = 100) -> dict:
         'z_min': float(Z_min),
         'z_max': float(Z_max),
     }
+
+
+def formula_grid_to_relief_stl(
+    formula_grid: np.ndarray,
+    width_mm: float = 200.0,
+    depth_mm: float = 200.0,
+    height_scale_mm: float = 50.0,
+    base_thickness_mm: float = 3.0,
+) -> bytes:
+    """Convert 2D formula evaluation grid to 3D-printable STL relief.
+    
+    Formula grid is evaluated on (X,Y) plane, Z height from grid values.
+    Grid shape: (n_y, n_x) → maps to physical (depth, width) in mm
+    
+    Args:
+        formula_grid: 2D numpy array from formula evaluation [0, 1] normalized
+        width_mm: X extent in mm
+        depth_mm: Y extent in mm
+        height_scale_mm: max Z height above base
+        base_thickness_mm: flat base thickness
+    
+    Returns:
+        Binary STL bytes (watertight mesh)
+    """
+    from stl import mesh as stl_mesh
+    
+    n_y, n_x = formula_grid.shape
+    
+    # Normalize formula output to [0, 1]
+    grid_min, grid_max = formula_grid.min(), formula_grid.max()
+    if grid_max > grid_min:
+        grid_norm = (formula_grid - grid_min) / (grid_max - grid_min)
+    else:
+        grid_norm = np.zeros_like(formula_grid)
+    
+    # Build vertex grid: X varies along columns, Y along rows
+    x_scale = width_mm / (n_x - 1) if n_x > 1 else 1.0
+    y_scale = depth_mm / (n_y - 1) if n_y > 1 else 1.0
+    
+    vertices = np.zeros((n_y, n_x, 3), dtype=np.float64)
+    for iy in range(n_y):
+        for ix in range(n_x):
+            z_height = float(base_thickness_mm) + grid_norm[iy, ix] * float(height_scale_mm)
+            vertices[iy, ix] = [
+                ix * x_scale,
+                iy * y_scale,
+                z_height,
+            ]
+    
+    # Triangulate surface (top)
+    tris = []
+    for iy in range(n_y - 1):
+        for ix in range(n_x - 1):
+            v0 = vertices[iy, ix]
+            v1 = vertices[iy, ix + 1]
+            v2 = vertices[iy + 1, ix + 1]
+            v3 = vertices[iy + 1, ix]
+            tris.append([v0, v1, v2])
+            tris.append([v0, v2, v3])
+    
+    # Flat bottom (reversed winding)
+    for iy in range(n_y - 1):
+        for ix in range(n_x - 1):
+            v0 = np.array([vertices[iy, ix, 0], vertices[iy, ix, 1], 0.0])
+            v1 = np.array([vertices[iy, ix + 1, 0], vertices[iy, ix + 1, 1], 0.0])
+            v2 = np.array([vertices[iy + 1, ix + 1, 0], vertices[iy + 1, ix + 1, 1], 0.0])
+            v3 = np.array([vertices[iy + 1, ix, 0], vertices[iy + 1, ix, 1], 0.0])
+            tris.append([v0, v3, v2])
+            tris.append([v0, v2, v1])
+    
+    # Edge walls (4 sides)
+    # Left (x=0)
+    for iy in range(n_y - 1):
+        v0 = np.array([0.0, vertices[iy, 0, 1], 0.0])
+        v1 = np.array([0.0, vertices[iy, 0, 1], vertices[iy, 0, 2]])
+        v2 = np.array([0.0, vertices[iy + 1, 0, 1], vertices[iy + 1, 0, 2]])
+        v3 = np.array([0.0, vertices[iy + 1, 0, 1], 0.0])
+        tris.append([v0, v1, v2])
+        tris.append([v0, v2, v3])
+    
+    # Right (x=width)
+    for iy in range(n_y - 1):
+        v0 = np.array([width_mm, vertices[iy, -1, 1], 0.0])
+        v1 = np.array([width_mm, vertices[iy, -1, 1], vertices[iy, -1, 2]])
+        v2 = np.array([width_mm, vertices[iy + 1, -1, 1], vertices[iy + 1, -1, 2]])
+        v3 = np.array([width_mm, vertices[iy + 1, -1, 1], 0.0])
+        tris.append([v0, v3, v2])
+        tris.append([v0, v2, v1])
+    
+    # Front (y=0)
+    for ix in range(n_x - 1):
+        v0 = np.array([vertices[0, ix, 0], 0.0, 0.0])
+        v1 = np.array([vertices[0, ix, 0], 0.0, vertices[0, ix, 2]])
+        v2 = np.array([vertices[0, ix + 1, 0], 0.0, vertices[0, ix + 1, 2]])
+        v3 = np.array([vertices[0, ix + 1, 0], 0.0, 0.0])
+        tris.append([v0, v1, v2])
+        tris.append([v0, v2, v3])
+    
+    # Back (y=depth)
+    for ix in range(n_x - 1):
+        v0 = np.array([vertices[-1, ix, 0], depth_mm, 0.0])
+        v1 = np.array([vertices[-1, ix, 0], depth_mm, vertices[-1, ix, 2]])
+        v2 = np.array([vertices[-1, ix + 1, 0], depth_mm, vertices[-1, ix + 1, 2]])
+        v3 = np.array([vertices[-1, ix + 1, 0], depth_mm, 0.0])
+        tris.append([v0, v3, v2])
+        tris.append([v0, v2, v1])
+    
+    # Build mesh
+    tri_array = np.array(tris, dtype=np.float64)
+    n_tris = len(tri_array)
+    m = stl_mesh.Mesh(np.zeros(n_tris, dtype=stl_mesh.Mesh.dtype))
+    m.vectors = tri_array
+    m.update_normals()
+    
+    buf = io.BytesIO()
+    m.save("formula_relief.stl", fh=buf)
+    buf.seek(0)
+    return buf.read()
