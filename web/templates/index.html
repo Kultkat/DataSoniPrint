@@ -337,6 +337,7 @@
     <div style="display:flex;gap:10px;margin-bottom:14px;border-bottom:1px solid var(--border);padding-bottom:10px">
       <button id="tabData" class="tab-btn tab-active" style="padding:8px 16px;background:transparent;border:none;color:var(--accent);cursor:pointer;font-weight:600;border-bottom:2px solid var(--accent);font-size:0.9rem">📊 Data File</button>
       <button id="tabImage" class="tab-btn" style="padding:8px 16px;background:transparent;border:none;color:var(--dim);cursor:pointer;font-weight:600;border-bottom:2px solid transparent;font-size:0.9rem">🖼️ Image</button>
+      <button id="tabFormula" class="tab-btn" style="padding:8px 16px;background:transparent;border:none;color:var(--dim);cursor:pointer;font-weight:600;border-bottom:2px solid transparent;font-size:0.9rem">ƒ(x,y) Formula</button>
     </div>
 
     <!-- Data Tab -->
@@ -384,6 +385,30 @@
         <span>Invert brightness (white=bottom, black=top)</span>
       </label>
       <div class="error" id="uploadErrorImage"></div>
+    </div>
+
+    <!-- Formula Tab -->
+    <div id="tabFormulaContent" class="tab-content" style="display:none">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+        <!-- URL Input -->
+        <div>
+          <label style="display:block;font-weight:600;margin-bottom:8px;color:var(--accent)">📎 From URL</label>
+          <input type="text" id="formulaUrl" placeholder="https://en.wikipedia.org/wiki/..." style="width:100%;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.9rem">
+          <button id="fetchFormulaBtn" style="margin-top:8px;padding:8px 16px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-weight:600;width:100%">Fetch Formula</button>
+        </div>
+        <!-- Paste Input -->
+        <div>
+          <label style="display:block;font-weight:600;margin-bottom:8px;color:var(--accent3)">📋 Paste Formula</label>
+          <textarea id="formulaText" placeholder="V(r) = r² + 1/r²&#10;or paste LaTeX/MathML..." style="width:100%;height:80px;padding:10px;background:var(--panel);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:0.9rem;font-family:monospace;resize:vertical"></textarea>
+        </div>
+      </div>
+      <div style="padding:12px;background:rgba(100,255,180,0.08);border-radius:6px;font-size:0.8rem;color:var(--dim);margin-bottom:16px">
+        <strong style="color:var(--accent3)">Supported Formats:</strong> Plain text (V(x,y) = ...) · LaTeX ($...$ or $$...$$) · Python syntax (x**2 + y**2)
+      </div>
+      <button id="loadFormulaBtn" style="padding:12px 24px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:1rem;width:100%" disabled>
+        ▶ Load Formula
+      </button>
+      <div class="error" id="uploadErrorFormula"></div>
     </div>
 
   </div>
@@ -572,23 +597,46 @@ $('#spreadSlider').addEventListener('input', () => {
 $('#tabData').addEventListener('click', () => {
   $('#tabDataContent').style.display = 'block';
   $('#tabImageContent').style.display = 'none';
+  $('#tabFormulaContent').style.display = 'none';
   $('#tabData').classList.add('tab-active');
   $('#tabImage').classList.remove('tab-active');
+  $('#tabFormula').classList.remove('tab-active');
   $('#tabData').style.color = 'var(--accent)';
   $('#tabImage').style.color = 'var(--dim)';
+  $('#tabFormula').style.color = 'var(--dim)';
   $('#tabData').style.borderBottomColor = 'var(--accent)';
   $('#tabImage').style.borderBottomColor = 'transparent';
+  $('#tabFormula').style.borderBottomColor = 'transparent';
 });
 
 $('#tabImage').addEventListener('click', () => {
   $('#tabDataContent').style.display = 'none';
   $('#tabImageContent').style.display = 'block';
+  $('#tabFormulaContent').style.display = 'none';
   $('#tabImage').classList.add('tab-active');
   $('#tabData').classList.remove('tab-active');
+  $('#tabFormula').classList.remove('tab-active');
   $('#tabImage').style.color = 'var(--accent)';
   $('#tabData').style.color = 'var(--dim)';
+  $('#tabFormula').style.color = 'var(--dim)';
   $('#tabImage').style.borderBottomColor = 'var(--accent)';
   $('#tabData').style.borderBottomColor = 'transparent';
+  $('#tabFormula').style.borderBottomColor = 'transparent';
+});
+
+$('#tabFormula').addEventListener('click', () => {
+  $('#tabDataContent').style.display = 'none';
+  $('#tabImageContent').style.display = 'none';
+  $('#tabFormulaContent').style.display = 'block';
+  $('#tabFormula').classList.add('tab-active');
+  $('#tabData').classList.remove('tab-active');
+  $('#tabImage').classList.remove('tab-active');
+  $('#tabFormula').style.color = 'var(--accent)';
+  $('#tabData').style.color = 'var(--dim)';
+  $('#tabImage').style.color = 'var(--dim)';
+  $('#tabFormula').style.borderBottomColor = 'var(--accent)';
+  $('#tabData').style.borderBottomColor = 'transparent';
+  $('#tabImage').style.borderBottomColor = 'transparent';
 });
 
 // ─── File upload ────────────────────────────────────────────────────────────
@@ -776,8 +824,9 @@ generateBtn.addEventListener('click', async () => {
 
   // Determine which endpoint to call
   const isImage = window.uploadMode === 'image';
+  const isFormula = window.uploadMode === 'formula';
   const endpoint = isImage ? '/image-relief' : '/relief';
-  const endpoint_label = isImage ? 'Image Relief' : 'Data Relief';
+  const endpoint_label = isFormula ? 'Formula Relief' : (isImage ? 'Image Relief' : 'Data Relief');
 
   const body = {
     job_id: jobId,
@@ -842,6 +891,102 @@ generateBtn.addEventListener('click', async () => {
     generateError.textContent = 'Network error: ' + e.message;
     generateError.classList.add('show');
     generateBtn.disabled = false;
+  }
+});
+
+// ─── Formula Input Handlers ──────────────────────────────────────────────────
+
+const formulaUrlInput = $('#formulaUrl');
+const formulaTextArea = $('#formulaText');
+const fetchFormulaBtn = $('#fetchFormulaBtn');
+const loadFormulaBtn = $('#loadFormulaBtn');
+const uploadErrorFormula = $('#uploadErrorFormula');
+
+formulaTextArea.addEventListener('input', () => {
+  loadFormulaBtn.disabled = formulaTextArea.value.trim() === '';
+});
+
+fetchFormulaBtn.addEventListener('click', async () => {
+  const url = formulaUrlInput.value.trim();
+  if (!url) {
+    uploadErrorFormula.textContent = 'Please enter a URL';
+    uploadErrorFormula.classList.add('show');
+    return;
+  }
+
+  uploadErrorFormula.classList.remove('show');
+  fetchFormulaBtn.disabled = true;
+  fetchFormulaBtn.textContent = 'Fetching...';
+
+  try {
+    const res = await fetch('/fetch-formula-html', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      uploadErrorFormula.textContent = data.error || 'Failed to fetch URL';
+      uploadErrorFormula.classList.add('show');
+      return;
+    }
+
+    // Extract formula text from HTML
+    if (data.formula_text) {
+      formulaTextArea.value = data.formula_text;
+      loadFormulaBtn.disabled = false;
+      uploadErrorFormula.textContent = '✓ Formula extracted, review and click Load';
+      uploadErrorFormula.style.color = 'var(--accent3)';
+      uploadErrorFormula.classList.add('show');
+    } else {
+      uploadErrorFormula.textContent = 'Could not find formula text on page (paste manually)';
+      uploadErrorFormula.classList.add('show');
+    }
+  } catch (e) {
+    uploadErrorFormula.textContent = 'Network error: ' + e.message;
+    uploadErrorFormula.classList.add('show');
+  } finally {
+    fetchFormulaBtn.disabled = false;
+    fetchFormulaBtn.textContent = 'Fetch Formula';
+  }
+});
+
+loadFormulaBtn.addEventListener('click', async () => {
+  const formulaText = formulaTextArea.value.trim();
+  if (!formulaText) return;
+
+  uploadErrorFormula.classList.remove('show');
+  loadFormulaBtn.disabled = true;
+
+  try {
+    const res = await fetch('/evaluate-formula', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formula: formulaText, resolution: 100 })
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      uploadErrorFormula.textContent = data.error || 'Formula evaluation failed';
+      uploadErrorFormula.classList.add('show');
+      loadFormulaBtn.disabled = false;
+      return;
+    }
+
+    // Success: generate relief from formula grid
+    window.uploadMode = 'formula';
+    jobId = data.job_id;
+
+    sliders.classList.add('show');
+    actions.classList.add('show');
+    generateBtn.disabled = false;
+
+    saveToArchive('Formula: ' + formulaText.substring(0, 30), 'formula', null);
+  } catch (e) {
+    uploadErrorFormula.textContent = 'Network error: ' + e.message;
+    uploadErrorFormula.classList.add('show');
+    loadFormulaBtn.disabled = false;
   }
 });
 

@@ -340,6 +340,111 @@ def process():
     })
 
 
+@app.route("/fetch-formula-html", methods=["POST"])
+def fetch_formula_html():
+    """Fetch HTML from URL and extract formula text using heuristics."""
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "No URL provided"}), 400
+
+    try:
+        import requests
+        from bs4 import BeautifulSoup
+        import re
+
+        # Fetch page
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+        response = requests.get(url, timeout=10, headers=headers)
+        response.raise_for_status()
+
+        # Parse HTML
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+
+        # Get text and look for formula patterns
+        text = soup.get_text(separator=' ')
+
+        # Try to extract formulas: look for V(, f(, equations with =, etc.
+        # For Wikipedia, look in math notation
+        formulas = []
+
+        # Pattern 1: V(x,y) = ... or f(x,y) = ...
+        pattern1 = re.findall(r'[Vf]\([^)]*\)\s*=\s*[^\n.;]{10,100}', text)
+        formulas.extend(pattern1)
+
+        # Pattern 2: Look for math tags content
+        math_tags = soup.find_all(['math', 'script', 'span'])
+        for tag in math_tags:
+            if 'class' in tag.attrs and 'mwe-math' in str(tag.attrs.get('class', '')):
+                if tag.get_text(strip=True):
+                    formulas.append(tag.get_text(strip=True))
+
+        # Return first found formula or summary
+        formula_text = formulas[0] if formulas else "Could not extract formula"
+
+        return jsonify({
+            "formula_text": formula_text,
+            "url": url,
+        })
+    except ImportError:
+        return jsonify({
+            "error": "requests/BeautifulSoup not installed. Paste formula manually.",
+            "formula_text": None
+        }), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to fetch: {str(e)}"}), 400
+
+
+@app.route("/evaluate-formula", methods=["POST"])
+def evaluate_formula_route():
+    """Evaluate formula and create data grid for relief generation."""
+    from processing import evaluate_formula
+
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Missing JSON body"}), 400
+
+    formula = data.get("formula", "").strip()
+    resolution = max(10, min(int(data.get("resolution", 100)), 300))
+
+    if not formula:
+        return jsonify({"error": "No formula provided"}), 400
+
+    try:
+        result = evaluate_formula(formula, resolution)
+
+        # Store formula grid as a temporary dataset
+        job_id = secrets.token_hex(12)
+        import numpy as np
+        grid_data = result['data']
+
+        _results[job_id] = {
+            "ts": time.time(),
+            "formula": formula,
+            "formula_data": grid_data,
+            "filename": f"formula_{job_id[:8]}.npy",
+            "file_type": "formula",
+        }
+        _cleanup_old_results()
+
+        return jsonify({
+            "job_id": job_id,
+            "formula": formula,
+            "resolution": resolution,
+            "z_range": [result['z_min'], result['z_max']],
+            "message": f"Formula evaluated at {resolution}×{resolution} resolution",
+        })
+    except Exception as e:
+        return jsonify({"error": f"Formula evaluation failed: {str(e)}"}), 400
+
+
 @app.route("/download/<job_id>/<file_type>")
 def download(job_id, file_type):
     """Download a processed output file."""

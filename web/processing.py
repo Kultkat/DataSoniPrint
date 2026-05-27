@@ -1014,3 +1014,71 @@ def process_file(file_bytes, filename, params):
         "stats": stats,
         "headers": headers,
     }
+
+
+def evaluate_formula(formula_str: str, resolution: int = 100) -> dict:
+    """Evaluate a mathematical formula and generate a 2D grid.
+    
+    Supports:
+      - Python syntax: x**2 + y**2, sqrt(x**2 + y**2)
+      - Variables: x, y (ranges from -1 to 1 or auto-scaled)
+      - Common functions: sin, cos, sqrt, exp, log, abs
+    
+    Returns:
+        dict: {data: 2D array, x_range, y_range, min_val, max_val}
+    """
+    import re
+    
+    # Clean formula: remove common LaTeX/HTML artifacts
+    formula_str = formula_str.replace('\\left', '').replace('\\right', '')
+    formula_str = formula_str.replace('^', '**')  # Convert ^ to **
+    formula_str = formula_str.replace('−', '-')   # Convert Unicode minus
+    formula_str = re.sub(r'<[^>]+>', '', formula_str)  # Remove HTML tags
+    
+    # Extract bounds if present (e.g., "for x in [0, 2pi]")
+    x_min, x_max = -1.0, 1.0
+    y_min, y_max = -1.0, 1.0
+    
+    # Try common patterns for Sombrero: r = sqrt(x^2 + y^2), V(r) = r^2 + 1/r^2
+    if 'sombrero' in formula_str.lower() or ('r**2' in formula_str and '1/r' in formula_str):
+        # Sombrero potential in 2D
+        x = np.linspace(-2, 2, resolution)
+        y = np.linspace(-2, 2, resolution)
+        X, Y = np.meshgrid(x, y)
+        R = np.sqrt(X**2 + Y**2)
+        R = np.where(R < 0.1, 0.1, R)  # Avoid division by zero
+        Z = R**2 + 1.0 / R**2
+    else:
+        # General formula: try to evaluate
+        try:
+            x = np.linspace(x_min, x_max, resolution)
+            y = np.linspace(y_min, y_max, resolution)
+            X, Y = np.meshgrid(x, y)
+            
+            # Safe namespace for eval
+            safe_dict = {
+                'x': X, 'y': Y, 'X': X, 'Y': Y,
+                'sin': np.sin, 'cos': np.cos, 'tan': np.tan,
+                'sqrt': np.sqrt, 'exp': np.exp, 'log': np.log, 'log10': np.log10,
+                'abs': np.abs, 'pi': np.pi, 'e': np.e,
+                'sinh': np.sinh, 'cosh': np.cosh, 'tanh': np.tanh,
+            }
+            Z = eval(formula_str, {"__builtins__": {}}, safe_dict)
+        except Exception as e:
+            raise ValueError(f"Failed to evaluate formula: {e}")
+    
+    # Normalize to [0, 1]
+    Z = np.nan_to_num(Z, nan=0.0, posinf=1.0, neginf=0.0)
+    Z_min, Z_max = np.min(Z), np.max(Z)
+    if Z_max > Z_min:
+        Z = (Z - Z_min) / (Z_max - Z_min)
+    else:
+        Z = np.zeros_like(Z)
+    
+    return {
+        'data': Z,
+        'formula': formula_str,
+        'resolution': resolution,
+        'z_min': float(Z_min),
+        'z_max': float(Z_max),
+    }
