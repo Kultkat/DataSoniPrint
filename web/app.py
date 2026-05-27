@@ -266,12 +266,25 @@ def relief():
         depth_mm          = max(10.0, min(float(data.get("depth_mm",  100.0)),         200.0))
         height_scale_mm   = max(10.0, min(float(data.get("height_scale_mm", 100.0)),   200.0))
         base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
+        spread            = max(0.5, min(float(data.get("spread", 1.0)),               3.0))
+        invert_volume     = bool(data.get("invert_volume", False))
+
+        # Apply transformations to formula grid
+        grid_transformed = formula_data.copy()
+
+        # Apply spread function (power law for contrast)
+        if spread != 1.0:
+            grid_transformed = np.power(np.clip(grid_transformed, 0, 1), 1.0 / spread)
+
+        # Invert volume if requested
+        if invert_volume:
+            grid_transformed = 1.0 - grid_transformed
 
         scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
 
         try:
             stl_bytes = formula_grid_to_relief_stl(
-                formula_data,
+                grid_transformed,
                 width_mm=scaled_w,
                 depth_mm=scaled_d,
                 height_scale_mm=height_scale_mm,

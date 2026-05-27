@@ -405,6 +405,10 @@
       <div style="padding:12px;background:rgba(100,255,180,0.08);border-radius:6px;font-size:0.8rem;color:var(--dim);margin-bottom:16px">
         <strong style="color:var(--accent3)">Supported Formats:</strong> Plain text (V(x,y) = ...) · LaTeX ($...$ or $$...$$) · Python syntax (x**2 + y**2)
       </div>
+      <label style="display:flex;align-items:center;margin-bottom:14px;gap:8px;cursor:pointer">
+        <input type="checkbox" id="invertVolumeCheckbox">
+        <span>Invert Volume (negative/inside-out relief)</span>
+      </label>
       <button id="loadFormulaBtn" style="padding:12px 24px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-weight:600;font-size:1rem;width:100%" disabled>
         ▶ Load Formula
       </button>
@@ -443,7 +447,7 @@
         <span class="val" id="spreadVal">1.0</span>
       </div>
       <div style="display:none;font-size:0.75rem;color:var(--dim);padding:0 0 8px 0;margin-top:-6px" id="spreadHint">
-        0.5 = braille bumps • 1.0 = normal • 2.0+ = sharp spikes
+        <span id="spreadHintText">0.5 = braille bumps • 1.0 = normal • 2.0+ = sharp spikes</span>
       </div>
       <div class="slider-row">
         <label>Resolution</label>
@@ -853,6 +857,12 @@ generateBtn.addEventListener('click', async () => {
     body.spread = parseFloat($('#spreadSlider').value);
   }
 
+  // Formula mode: add spread and invert volume
+  if (isFormula) {
+    body.spread = parseFloat($('#spreadSlider').value);
+    body.invert_volume = $('#invertVolumeCheckbox').checked;
+  }
+
   // Data mode: add column and n_points (not needed for formula mode)
   if (!isImage && !isFormula) {
     const column = getSelectedColumn();
@@ -1021,8 +1031,11 @@ loadFormulaBtn.addEventListener('click', async () => {
     depthVal.textContent = '100 mm';
     heightVal.textContent = '100 mm';
 
-    $('#spreadRow').style.display = 'none';
-    $('#spreadHint').style.display = 'none';
+    // Update spread hint for formulas (different meaning than for images)
+    $('#spreadHintText').textContent = '0.5 = see edges • 1.0 = normal • 2.0+ = sharpen peaks';
+
+    $('#spreadRow').style.display = 'block';  // Show spread slider for formulas!
+    $('#spreadHint').style.display = 'block';
     colSelect.classList.remove('show');  // Hide column selector for formula mode
 
     sliders.classList.add('show');
