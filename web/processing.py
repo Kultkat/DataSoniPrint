@@ -1039,14 +1039,18 @@ def evaluate_formula(formula_str: str, resolution: int = 100) -> dict:
     x_min, x_max = -1.0, 1.0
     y_min, y_max = -1.0, 1.0
     
-    # Try common patterns for Sombrero: r = sqrt(x^2 + y^2), V(r) = r^2 + 1/r^2
-    if 'sombrero' in formula_str.lower() or ('r**2' in formula_str and '1/r' in formula_str):
-        # Sombrero potential in 2D
-        x = np.linspace(-2, 2, resolution)
-        y = np.linspace(-2, 2, resolution)
+    # Try common patterns for Sombrero: V(r) = r^2 + 1/r^2
+    is_sombrero = ('sombrero' in formula_str.lower() or
+                   ('r**2' in formula_str and ('1/r' in formula_str or '1.0/r' in formula_str)) or
+                   ('r^2' in formula_str and '1/r^2' in formula_str))
+
+    if is_sombrero:
+        # Sombrero potential in 2D: V(r) = r² + 1/r²
+        x = np.linspace(-2.5, 2.5, resolution)
+        y = np.linspace(-2.5, 2.5, resolution)
         X, Y = np.meshgrid(x, y)
         R = np.sqrt(X**2 + Y**2)
-        R = np.where(R < 0.1, 0.1, R)  # Avoid division by zero
+        R = np.where(R < 0.15, 0.15, R)  # Avoid division by zero at origin
         Z = R**2 + 1.0 / R**2
     else:
         # General formula: try to evaluate
