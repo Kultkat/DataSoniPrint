@@ -1002,13 +1002,14 @@ loadFormulaBtn.addEventListener('click', async () => {
     document.querySelectorAll('.slider-row label')[1].textContent = 'Y (mm)';
     document.querySelectorAll('.slider-row label')[2].textContent = 'Z Height';
 
-    // Set default values for formula mode: cube 200×200×200mm
-    widthSlider.value = 200;
-    depthSlider.value = 200;
-    heightSlider.value = 200;
-    widthVal.textContent = '200 mm';
-    depthVal.textContent = '200 mm';
-    heightVal.textContent = '200 mm';
+    // Set default values for formula mode: 100×100×100mm cube (1:1:1 ratio)
+    // Square space for square formula grids (Sombrero becomes properly round)
+    widthSlider.value = 100;
+    depthSlider.value = 100;
+    heightSlider.value = 100;
+    widthVal.textContent = '100 mm';
+    depthVal.textContent = '100 mm';
+    heightVal.textContent = '100 mm';
 
     // Ensure depth slider can reach 200
     depthSlider.max = 200;

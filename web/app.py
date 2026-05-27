@@ -260,10 +260,11 @@ def relief():
         if formula_data is None:
             return jsonify({"error": "Formula data not available"}), 400
 
-        # Formula data is 2D grid — use dedicated converter with default 200mm cube
-        width_mm          = max(50.0, min(float(data.get("width_mm", 200.0)),          200.0))
-        depth_mm          = max(50.0, min(float(data.get("depth_mm",  200.0)),         200.0))
-        height_scale_mm   = max(50.0, min(float(data.get("height_scale_mm", 200.0)),   200.0))
+        # Formula data is 2D grid — use dedicated converter with default 100mm cube (1:1:1)
+        # Square formula grids map to square physical space → radial formulas print round
+        width_mm          = max(10.0, min(float(data.get("width_mm", 100.0)),          200.0))
+        depth_mm          = max(10.0, min(float(data.get("depth_mm",  100.0)),         200.0))
+        height_scale_mm   = max(10.0, min(float(data.get("height_scale_mm", 100.0)),   200.0))
         base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
 
         scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
