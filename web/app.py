@@ -251,16 +251,19 @@ def relief():
     job = _results[job_id]
 
     # Check if this is formula data
-    if job.get("file_type") == "formula":
+    is_formula = job.get("file_type") == "formula"
+    n_points = None  # Only used for data mode
+
+    if is_formula:
         import numpy as np
         formula_data = job.get("formula_data")
         if formula_data is None:
             return jsonify({"error": "Formula data not available"}), 400
 
-        # Formula data is 2D grid — use dedicated converter
-        width_mm          = max(10.0, min(float(data.get("width_mm", 200.0)),          200.0))
-        depth_mm          = max(10.0, min(float(data.get("depth_mm",  200.0)),         200.0))
-        height_scale_mm   = max(1.0,  min(float(data.get("height_scale_mm",  50.0)),   200.0))
+        # Formula data is 2D grid — use dedicated converter with default 200mm cube
+        width_mm          = max(50.0, min(float(data.get("width_mm", 200.0)),          200.0))
+        depth_mm          = max(50.0, min(float(data.get("depth_mm",  200.0)),         200.0))
+        height_scale_mm   = max(50.0, min(float(data.get("height_scale_mm", 200.0)),   200.0))
         base_thickness_mm = max(1.0,  min(float(data.get("base_thickness_mm", 3.0)),   20.0))
 
         scaled_w, scaled_d, scale_factor = scale_to_bed(width_mm, depth_mm, height_scale_mm)
@@ -309,22 +312,25 @@ def relief():
             return jsonify({"error": f"STL generation failed: {e}"}), 500
 
     job["relief_stl"] = stl_bytes
-    if job.get("file_type") == "formula":
+    if is_formula:
         job["relief_filename"] = "formula"
     else:
         job["relief_column"] = column
     job["ts"] = time.time()
 
-    return jsonify({
+    response = {
         "job_id": job_id,
         "column": job.get("relief_column", "formula"),
         "width_mm": round(scaled_w, 2),
         "depth_mm": round(scaled_d, 2),
         "height_scale_mm": height_scale_mm,
         "scale_factor": round(scale_factor, 4),
-        "n_points": n_points,
         "ready": True,
-    })
+    }
+    if n_points is not None:
+        response["n_points"] = n_points
+
+    return jsonify(response)
 
 
 @app.route("/process", methods=["POST"])
