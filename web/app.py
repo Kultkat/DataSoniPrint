@@ -273,8 +273,9 @@ def relief():
         grid_transformed = formula_data.copy()
 
         # Apply spread function (power law for contrast)
+        # spread < 1: flatten (see edges), spread > 1: sharpen (peaks)
         if spread != 1.0:
-            grid_transformed = np.power(np.clip(grid_transformed, 0, 1), 1.0 / spread)
+            grid_transformed = np.power(np.clip(grid_transformed, 0, 1), float(spread))
 
         # Invert volume if requested
         if invert_volume:

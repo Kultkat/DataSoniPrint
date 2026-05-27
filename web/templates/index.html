@@ -829,7 +829,8 @@ async function handleImageFile(file) {
 
 // ─── Generate relief ────────────────────────────────────────────────────────
 
-generateBtn.addEventListener('click', async () => {
+// Helper function to regenerate STL (used for live preview and button click)
+async function regenerateSTL() {
   generateBtn.disabled = true;
   generateError.classList.remove('show');
   downloads.classList.remove('show');
@@ -915,6 +916,23 @@ generateBtn.addEventListener('click', async () => {
     generateError.classList.add('show');
     generateBtn.disabled = false;
   }
+}
+
+// Add live preview for formula mode: regenerate on slider change
+function addLivePreviewListeners() {
+  if (window.uploadMode !== 'formula') return;
+
+  [widthSlider, depthSlider, heightSlider, baseSlider, $('#spreadSlider'), $('#invertVolumeCheckbox')].forEach(el => {
+    if (el) {
+      el.removeEventListener('change', regenerateSTL);  // Remove old listener
+      el.addEventListener('change', regenerateSTL);     // Add new on "release" only
+    }
+  });
+}
+
+generateBtn.addEventListener('click', async () => {
+  await regenerateSTL();
+  addLivePreviewListeners();  // Enable live preview after first generation
 });
 
 // ─── Formula Input Handlers ──────────────────────────────────────────────────
