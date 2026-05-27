@@ -419,17 +419,17 @@
     <div class="sliders" id="sliders">
       <div class="slider-row">
         <label>Width</label>
-        <input type="range" id="widthSlider" min="50" max="200" value="180">
-        <span class="val" id="widthVal">180 mm</span>
+        <input type="range" id="widthSlider" min="50" max="200" value="100">
+        <span class="val" id="widthVal">100 mm</span>
       </div>
       <div class="slider-row">
         <label>Depth</label>
-        <input type="range" id="depthSlider" min="10" max="50" value="20">
-        <span class="val" id="depthVal">20 mm</span>
+        <input type="range" id="depthSlider" min="50" max="200" value="100">
+        <span class="val" id="depthVal">100 mm</span>
       </div>
       <div class="slider-row">
         <label>Height Scale</label>
-        <input type="range" id="heightSlider" min="5" max="200" value="100">
+        <input type="range" id="heightSlider" min="50" max="200" value="100">
         <span class="val" id="heightVal">100 mm</span>
       </div>
       <div class="slider-row">
@@ -713,6 +713,15 @@ async function handleFile(file) {
     // Update slider labels for data mode
     document.querySelectorAll('.slider-row label')[0].textContent = 'Width';
     document.querySelectorAll('.slider-row label')[1].textContent = 'Depth';
+
+    // Reset to data mode defaults: wide profile, shallow relief
+    widthSlider.value = 180;
+    depthSlider.value = 50;  // Back to shallow for 1D line profiles
+    heightSlider.value = 100;
+    widthVal.textContent = '180 mm';
+    depthVal.textContent = '50 mm';
+    heightVal.textContent = '100 mm';
+
     $('#spreadRow').style.display = 'none';
     $('#spreadHint').style.display = 'none';
     colSelect.classList.add('show');  // Show column selector for data mode
@@ -1004,15 +1013,13 @@ loadFormulaBtn.addEventListener('click', async () => {
 
     // Set default values for formula mode: 100×100×100mm cube (1:1:1 ratio)
     // Square space for square formula grids (Sombrero becomes properly round)
+    // All sliders now have same range (50-200) and default (100 = middle)
     widthSlider.value = 100;
     depthSlider.value = 100;
     heightSlider.value = 100;
     widthVal.textContent = '100 mm';
     depthVal.textContent = '100 mm';
     heightVal.textContent = '100 mm';
-
-    // Ensure depth slider can reach 200
-    depthSlider.max = 200;
 
     $('#spreadRow').style.display = 'none';
     $('#spreadHint').style.display = 'none';
