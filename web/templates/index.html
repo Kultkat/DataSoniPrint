@@ -843,8 +843,8 @@ generateBtn.addEventListener('click', async () => {
     body.spread = parseFloat($('#spreadSlider').value);
   }
 
-  // Data mode: add column and n_points
-  if (!isImage) {
+  // Data mode: add column and n_points (not needed for formula mode)
+  if (!isImage && !isFormula) {
     const column = getSelectedColumn();
     if (!column) {
       generateError.textContent = 'Select a column to print.';
@@ -875,7 +875,10 @@ generateBtn.addEventListener('click', async () => {
     }
 
     // Set download link
-    const label = isImage ? 'image_relief.stl' : `${body.column}_relief.stl`;
+    let label;
+    if (isImage) label = 'image_relief.stl';
+    else if (isFormula) label = 'formula_relief.stl';
+    else label = `${body.column}_relief.stl`;
     dlRelief.href = `/download/${jobId}/relief`;
     dlRelief.textContent = label;
     downloads.classList.add('show');
@@ -903,7 +906,22 @@ const loadFormulaBtn = $('#loadFormulaBtn');
 const uploadErrorFormula = $('#uploadErrorFormula');
 
 formulaTextArea.addEventListener('input', () => {
-  loadFormulaBtn.disabled = formulaTextArea.value.trim() === '';
+  // Clean up pasted formula: remove Unicode math symbols, extra spaces
+  let text = formulaTextArea.value;
+  // Replace common Unicode math characters
+  text = text.replace(/∂/g, 'd');  // partial derivative
+  text = text.replace(/∆/g, 'delta');  // delta
+  text = text.replace(/×/g, '*');  // multiplication
+  text = text.replace(/÷/g, '/');  // division
+  text = text.replace(/−/g, '-');  // minus sign
+  text = text.replace(/²/g, '**2');  // superscript 2
+  text = text.replace(/³/g, '**3');  // superscript 3
+  text = text.replace(/π/g, 'pi');  // pi
+  text = text.trim();
+  if (text !== formulaTextArea.value) {
+    formulaTextArea.value = text;
+  }
+  loadFormulaBtn.disabled = text === '';
 });
 
 fetchFormulaBtn.addEventListener('click', async () => {

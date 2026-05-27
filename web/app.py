@@ -239,7 +239,7 @@ def image_relief():
 
 @app.route("/relief", methods=["POST"])
 def relief():
-    """Generate a 3D relief STL from one data column."""
+    """Generate a 3D relief STL from one data column or formula grid."""
     data = request.get_json(silent=True)
     if not data:
         return jsonify({"error": "Missing JSON body"}), 400
@@ -249,15 +249,27 @@ def relief():
         return jsonify({"error": "No file uploaded or session expired"}), 400
 
     job = _results[job_id]
-    columns = job.get("columns_cache")
-    if columns is None:
-        return jsonify({"error": "Column data not available; please re-upload"}), 400
 
-    column = data.get("column")
-    if not column or column not in columns:
-        column = (job.get("headers") or [None])[0]
-    if not column or column not in columns:
-        return jsonify({"error": "No valid column specified"}), 400
+    # Check if this is formula data
+    if job.get("file_type") == "formula":
+        import numpy as np
+        formula_data = job.get("formula_data")
+        if formula_data is None:
+            return jsonify({"error": "Formula data not available"}), 400
+        # Flatten 2D formula grid to 1D for relief generation
+        column_data = np.mean(formula_data, axis=0) if len(formula_data.shape) == 2 else formula_data
+    else:
+        # Standard column-based data
+        columns = job.get("columns_cache")
+        if columns is None:
+            return jsonify({"error": "Column data not available; please re-upload"}), 400
+
+        column = data.get("column")
+        if not column or column not in columns:
+            column = (job.get("headers") or [None])[0]
+        if not column or column not in columns:
+            return jsonify({"error": "No valid column specified"}), 400
+        column_data = columns[column]
 
     width_mm          = max(10.0, min(float(data.get("width_mm", 180.0)),          200.0))
     depth_mm          = max(5.0,  min(float(data.get("depth_mm",  20.0)),          200.0))
@@ -269,7 +281,7 @@ def relief():
 
     try:
         stl_bytes = data_column_to_relief_stl(
-            columns[column],
+            column_data,
             width_mm=scaled_w,
             depth_mm=scaled_d,
             height_scale_mm=height_scale_mm,
@@ -280,12 +292,15 @@ def relief():
         return jsonify({"error": f"STL generation failed: {e}"}), 500
 
     job["relief_stl"] = stl_bytes
-    job["relief_column"] = column
+    if job.get("file_type") == "formula":
+        job["relief_filename"] = "formula"
+    else:
+        job["relief_column"] = column
     job["ts"] = time.time()
 
     return jsonify({
         "job_id": job_id,
-        "column": column,
+        "column": job.get("relief_column", "formula"),
         "width_mm": round(scaled_w, 2),
         "depth_mm": round(scaled_d, 2),
         "height_scale_mm": height_scale_mm,
