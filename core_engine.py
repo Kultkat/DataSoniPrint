@@ -84,7 +84,7 @@ def load_csv(file_bytes):
 
 
 def load_hdf5(file_bytes):
-    """Load HDF5, return headers and column data dict."""
+    """Load HDF5, return headers and column data dict. Skip metadata, only keep numeric 1D/2D arrays."""
     if h5py is None:
         raise ImportError("h5py not installed")
 
@@ -98,22 +98,40 @@ def load_hdf5(file_bytes):
             columns = {}
 
             def extract_datasets(group, prefix=''):
-                for key in group.keys():
-                    path = f"{prefix}/{key}" if prefix else key
-                    item = group[key]
-                    if isinstance(item, h5py.Dataset):
-                        headers.append(path)
+                try:
+                    for key in group.keys():
                         try:
-                            columns[path] = np.array(item[:], dtype=np.float64).flatten()
-                        except:
+                            path = f"{prefix}/{key}" if prefix else key
+                            item = group[key]
+
+                            # Skip known metadata groups
+                            if key.lower() in {'meta', 'metadata', 'attrs', 'attributes', 'info'}:
+                                continue
+
+                            if isinstance(item, h5py.Dataset):
+                                # Only process numeric, 1D or 2D datasets
+                                if item.dtype.kind in {'f', 'i', 'u'}:  # float, int, uint
+                                    try:
+                                        data = np.array(item[:], dtype=np.float64)
+                                        if data.size > 0:  # Not empty
+                                            headers.append(path)
+                                            columns[path] = data.flatten()
+                                    except (ValueError, TypeError, MemoryError):
+                                        # Skip datasets that can't be converted
+                                        pass
+
+                            elif isinstance(item, h5py.Group):
+                                extract_datasets(item, path)
+                        except Exception:
+                            # Skip individual items that cause errors
                             pass
-                    elif isinstance(item, h5py.Group):
-                        extract_datasets(item, path)
+                except Exception:
+                    pass
 
             extract_datasets(f)
 
             if not headers:
-                raise ValueError("No datasets found in HDF5")
+                raise ValueError("No numeric datasets found in HDF5 file. Try uploading a CSV instead.")
 
             return headers, columns
     finally:
