@@ -14,7 +14,7 @@ import tempfile
 from core_engine import (
     load_file, normalize_to_01, select_columns_for_axes,
     evaluate_formula, generate_preview_mesh, scale_to_bed, mesh_to_stl_bytes,
-    image_to_relief_array
+    image_to_relief_array, spread_to_grid
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -119,8 +119,24 @@ if st.session_state.headers:
         with col3:
             z_col = st.selectbox("Z-axis (height):", st.session_state.headers, index=min(2, len(st.session_state.headers)-1), key="z_col")
 
+        st.markdown("**Spread** — how to project 1D column data onto a 2D relief grid:")
+        col1, col2 = st.columns(2)
+        with col1:
+            spread_mode = st.radio(
+                "Spread mode:",
+                ["reshape", "scatter"],
+                horizontal=True,
+                help=(
+                    "reshape: resample Z and fold it into a square grid (best for "
+                    "time-series like GW strain). scatter: interpolate (X, Y, Z) "
+                    "triples onto a regular grid (needs distinct X and Y)."
+                ),
+            )
+        with col2:
+            spread_res = st.slider("Spread resolution:", 32, 256, 100, step=8, key="spread_res")
+
         if st.button("▶ Generate from Data", key="gen_data"):
-            with st.spinner("Normalizing data and generating mesh..."):
+            with st.spinner("Spreading data into a 2D relief grid..."):
                 try:
                     x_data, y_data, z_data = select_columns_for_axes(
                         st.session_state.columns,
@@ -128,13 +144,16 @@ if st.session_state.headers:
                         x_col, y_col, z_col
                     )
 
-                    # Create 2D grid from z_data
-                    grid_res = 100
-                    z_grid = np.tile(normalize_to_01(z_data[:grid_res**2]), (1, 1))
-                    z_grid = z_grid.reshape(grid_res, grid_res)
+                    z_grid = spread_to_grid(
+                        x_data, y_data, z_data,
+                        resolution=spread_res,
+                        mode=spread_mode,
+                    )
 
                     st.session_state.current_z_grid = z_grid
-                    st.success("✓ Data loaded and normalized (0-1 scale)")
+                    st.success(
+                        f"✓ Spread {len(z_data)} Z samples → {z_grid.shape[0]}×{z_grid.shape[1]} relief grid"
+                    )
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
 

@@ -286,6 +286,91 @@ def select_columns_for_axes(columns, headers, x_col=None, y_col=None, z_col=None
     return x_data, y_data, z_data
 
 
+def spread_to_grid(x_data, y_data, z_data, resolution=100, mode="reshape"):
+    """
+    Spread 1D column data into a 2D relief grid (normalized to [0,1]).
+
+    Modes:
+        "reshape"   — resample Z to resolution*resolution samples and reshape
+                      (works for time-series and any 1D signal).
+        "scatter"   — treat (X, Y, Z) as scattered points and interpolate onto
+                      a regular grid. Requires scipy; falls back to reshape if
+                      scipy is missing or X/Y are degenerate.
+
+    Returns a (resolution, resolution) float array.
+    """
+    z_data = np.asarray(z_data, dtype=np.float64).flatten()
+    if z_data.size == 0:
+        raise ValueError("Z column is empty")
+
+    if mode == "scatter":
+        try:
+            from scipy.interpolate import griddata
+            x_data = np.asarray(x_data, dtype=np.float64).flatten()
+            y_data = np.asarray(y_data, dtype=np.float64).flatten()
+            n = min(x_data.size, y_data.size, z_data.size)
+            x_data, y_data, z_data = x_data[:n], y_data[:n], z_data[:n]
+
+            # Need X and Y to span 2D space (not colinear) for Delaunay
+            x_span = float(np.ptp(x_data))
+            y_span = float(np.ptp(y_data))
+            colinear = False
+            if x_span > 1e-9 and y_span > 1e-9:
+                # Pearson correlation: |r| ≈ 1 means colinear, scatter degenerate
+                xc = x_data - x_data.mean()
+                yc = y_data - y_data.mean()
+                denom = np.sqrt((xc * xc).sum() * (yc * yc).sum())
+                if denom > 0:
+                    r = float((xc * yc).sum() / denom)
+                    colinear = abs(r) > 0.999
+
+            if x_span > 1e-9 and y_span > 1e-9 and not colinear:
+                xi = np.linspace(x_data.min(), x_data.max(), resolution)
+                yi = np.linspace(y_data.min(), y_data.max(), resolution)
+                xx, yy = np.meshgrid(xi, yi)
+                try:
+                    grid = griddata(
+                        (x_data, y_data), z_data, (xx, yy),
+                        method="linear", fill_value=np.nan,
+                    )
+                    if np.isnan(grid).any():
+                        nearest = griddata(
+                            (x_data, y_data), z_data, (xx, yy), method="nearest"
+                        )
+                        grid = np.where(np.isnan(grid), nearest, grid)
+                    return normalize_to_01(grid)
+                except Exception:
+                    pass  # Delaunay failure → fall through to reshape
+        except ImportError:
+            pass  # scipy missing → fall through to reshape
+
+    # Reshape mode: project 1D z onto a resolution × resolution grid.
+    target_len = resolution * resolution
+    if z_data.size == target_len:
+        resampled = z_data
+    elif z_data.size >= target_len * 4:
+        # Source is much larger than target — point-sampling would alias and
+        # create patchy "half flat / half spiky" textures on noise-like data.
+        # Take the RMS of each window so each grid cell reflects the local
+        # signal energy, giving a visually balanced relief.
+        edges = np.linspace(0, z_data.size, target_len + 1, dtype=np.int64)
+        resampled = np.empty(target_len, dtype=np.float64)
+        for k in range(target_len):
+            chunk = z_data[edges[k]:edges[k + 1]]
+            if chunk.size:
+                resampled[k] = np.sqrt(np.mean(chunk * chunk))
+            else:
+                resampled[k] = 0.0
+    else:
+        # Modest size mismatch — linear interpolation is fine.
+        src_idx = np.linspace(0, 1, z_data.size)
+        dst_idx = np.linspace(0, 1, target_len)
+        resampled = np.interp(dst_idx, src_idx, z_data)
+
+    grid = resampled.reshape(resolution, resolution)
+    return normalize_to_01(grid)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 2: Formula Engine
 # ─────────────────────────────────────────────────────────────────────────────
@@ -493,7 +578,10 @@ def scale_to_bed(z_grid, target_width_mm=100, target_depth_mm=100,
             faces.append([v0, v2, v1])
             faces.append([v0, v3, v2])
 
-    # Side faces
+    # Side faces — all four perimeter walls must be stitched
+    # to make the mesh watertight (manifold).
+
+    # Front wall (i = 0, y = 0) — outward normal -Y
     for j in range(w - 1):
         v0_t = j
         v1_t = j + 1
@@ -502,6 +590,17 @@ def scale_to_bed(z_grid, target_width_mm=100, target_depth_mm=100,
         faces.append([v0_t, v1_t, v1_b])
         faces.append([v0_t, v1_b, v0_b])
 
+    # Back wall (i = h-1, y = scaled_d) — outward normal +Y
+    back_row = (h - 1) * w
+    for j in range(w - 1):
+        v0_t = back_row + j
+        v1_t = back_row + j + 1
+        v0_b = bot_start + back_row + j
+        v1_b = bot_start + back_row + j + 1
+        faces.append([v0_t, v1_b, v1_t])
+        faces.append([v0_t, v0_b, v1_b])
+
+    # Left wall (j = 0, x = 0) — outward normal -X
     for i in range(h - 1):
         v0_t = i * w
         v1_t = (i + 1) * w
@@ -510,10 +609,22 @@ def scale_to_bed(z_grid, target_width_mm=100, target_depth_mm=100,
         faces.append([v0_t, v0_b, v1_b])
         faces.append([v0_t, v1_b, v1_t])
 
+    # Right wall (j = w-1, x = scaled_w) — outward normal +X
+    for i in range(h - 1):
+        v0_t = i * w + (w - 1)
+        v1_t = (i + 1) * w + (w - 1)
+        v0_b = bot_start + i * w + (w - 1)
+        v1_b = bot_start + (i + 1) * w + (w - 1)
+        faces.append([v0_t, v1_t, v1_b])
+        faces.append([v0_t, v1_b, v0_b])
+
     # Create trimesh
     mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    mesh.remove_duplicate_faces()
+    # trimesh 4.x: dedup + weld coincident vertices for a clean manifold
+    mesh.update_faces(mesh.unique_faces())
     mesh.merge_vertices()
+    # Ensure outward-facing normals (positive volume) so slicers don't flip parts
+    mesh.fix_normals()
 
     return mesh, (scaled_w, scaled_d, scaled_h, scale)
 
