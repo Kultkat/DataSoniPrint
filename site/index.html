@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DataSoniPrint — Feel, hear, and see scientific data</title>
+  <title>DataSoniPrint — Feel and see scientific data</title>
   <meta name="description"
-        content="DataSoniPrint turns 2D scientific data into accessible outputs: a tactile 3D-printable relief (STL), sonification, and a spectrogram — so no single sense is required to experience the data." />
+        content="DataSoniPrint turns 2D scientific data into an accessible, tactile 3D-printable relief (STL) — from data columns, math formulas, or images — with engraved or braille axis labels." />
 
   <!-- ════════════════════════════════════════════════════════════════════
        ⬇️  AFTER YOU DEPLOY ON share.streamlit.io, PASTE YOUR APP URL HERE  ⬇️
@@ -114,7 +114,7 @@
   <header class="hero">
     <div class="wrap">
       <h1>DataSoniPrint</h1>
-      <p class="tagline">Turn scientific data into something you can <strong>feel</strong>, <strong>hear</strong>, and <strong>see</strong>.</p>
+      <p class="tagline">Turn scientific data into something you can <strong>feel</strong> and <strong>see</strong>.</p>
 
       <!-- 🔗 LAUNCH BUTTON — replace href with your Streamlit URL -->
       <a class="btn" href="https://datasoniprint.streamlit.app">
@@ -140,15 +140,22 @@
             <h3>Tactile 3D print</h3>
             <p>Export a watertight STL relief you can 3D-print and feel — with optional engraved or braille axis labels.</p>
           </div>
+          <!-- Sonification (audio) — temporarily hidden for now; re-enable when sound work lands.
           <div class="card">
             <div class="icon" aria-hidden="true">🔊</div>
             <h3>Sonification</h3>
             <p>Hear the data as sound, so it can be experienced without sight.</p>
           </div>
+          -->
           <div class="card">
-            <div class="icon" aria-hidden="true">📈</div>
-            <h3>Visual relief</h3>
+            <div class="icon" aria-hidden="true">🧩</div>
+            <h3>From data, formulas or images</h3>
             <p>Generate reliefs from data columns, math formulas, or images.</p>
+          </div>
+          <div class="card">
+            <div class="icon" aria-hidden="true">👁️</div>
+            <h3>Live 3D preview</h3>
+            <p>See the relief in 3D and scale it to your printer bed before exporting.</p>
           </div>
         </div>
       </section>
@@ -156,7 +163,7 @@
       <section aria-labelledby="who">
         <h2 id="who">Who it helps</h2>
         <p>
-          A blind researcher can hold the 3D print or listen to the sonification;
+          A blind or low-vision researcher can hold and feel the 3D print;
           a sighted researcher can read the chart — everyone works from the same
           underlying dataset.
         </p>

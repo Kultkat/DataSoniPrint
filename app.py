@@ -228,8 +228,40 @@ elif mode == "🔢 From Math Formula":
 
     formula = st.text_input(
         "Formula (e.g., 'sin(x)*cos(y)', 'exp(-x**2 - y**2)', 'sqrt(x**2 + y**2)'):",
-        value="sin(x)*cos(y)"
+        value="sin(x)*cos(y)",
+        help=(
+            "Enter the right-hand side only — no 'z =' or 'f(x,y) ='. "
+            "Use the variables x and y, and plain ASCII math."
+        ),
     )
+
+    with st.expander("ℹ️ Formula format — what works and what doesn't"):
+        st.markdown(
+            """
+**Required format**
+- **Right-hand side only** — type `sin(x)*cos(y)`, not `z = sin(x)*cos(y)`.
+- **Variables are `x` and `y`** (the two grid axes). A formula using only `x`
+  is allowed — it's extruded along `y`.
+- **Plain ASCII math:** `*` multiply · `**` power · `/` divide · `+ -` (a normal
+  hyphen-minus). Functions: `sin cos tan exp log sqrt abs`, constant `pi`.
+
+**✅ Examples**
+- `sin(x)*cos(y)`
+- `exp(-x**2 - y**2)`
+- `(2/(sqrt(3)*pi**(1/4)))*(1-(x**2+y**2))*exp(-(x**2+y**2)/2)`  *(Mexican-hat wavelet)*
+
+**❌ Won't work**
+- An assignment / left-hand side: `ψ(t) =`, `z =`
+- Unicode math symbols: `·` (use `*`), `√` (use `sqrt`), `^` (use `**`),
+  `−` the long minus (use `-`), `π` (use `pi`)
+- Other variable names (`t`, `r`, `θ`, …) or undefined parameters (e.g. `σ`) —
+  substitute a number, or rewrite in terms of `x`/`y` (e.g. radius `sqrt(x**2+y**2)`)
+- Non-finite results (÷0, `log` of negatives) are dropped to the base, not raised.
+
+The height is **normalized** to the Height-scale slider, so only the *shape*
+matters — overall constants don't change the relief.
+"""
+        )
 
     col1, col2, col3 = st.columns(3)
     with col1:
