@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DataSoniPrint — Feel, hear, and see scientific data</title>
+  <meta name="description"
+        content="DataSoniPrint turns 2D scientific data into accessible outputs: a tactile 3D-printable relief (STL), sonification, and a spectrogram — so no single sense is required to experience the data." />
+
+  <!-- ════════════════════════════════════════════════════════════════════
+       ⬇️  AFTER YOU DEPLOY ON share.streamlit.io, PASTE YOUR APP URL HERE  ⬇️
+       Replace the href below with your real Streamlit address, e.g.
+       https://datasoniprint.streamlit.app
+       (it appears in two places: the button and the footer link).
+       ════════════════════════════════════════════════════════════════════ -->
+
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #141b33;
+      --text: #f2f4fb;
+      --muted: #aab2cf;
+      --accent: #6ea8fe;
+      --accent-strong: #2f6bff;
+      --focus: #ffd166;
+      --maxw: 900px;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f6f8ff; --panel: #ffffff; --text: #131a2e;
+        --muted: #4a536b; --accent: #2f6bff; --accent-strong: #1d4ed8;
+        --focus: #b45309;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    body {
+      margin: 0;
+      font: 1.125rem/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    a { color: var(--accent); }
+    a:focus-visible, button:focus-visible, .btn:focus-visible {
+      outline: 3px solid var(--focus);
+      outline-offset: 3px;
+    }
+    .skip {
+      position: absolute; left: -999px; top: 0;
+      background: var(--accent-strong); color: #fff; padding: .6rem 1rem;
+      border-radius: 0 0 .5rem 0; z-index: 10;
+    }
+    .skip:focus { left: 0; }
+    .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 1.25rem; }
+
+    header.hero {
+      padding: clamp(3rem, 8vw, 6rem) 0 clamp(2rem, 5vw, 3.5rem);
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(2.2rem, 6vw, 3.6rem);
+      line-height: 1.1; margin: 0 0 .5rem;
+      letter-spacing: -0.02em;
+    }
+    .hero .tagline { color: var(--muted); font-size: clamp(1.1rem, 3vw, 1.4rem); margin: 0 auto 2rem; max-width: 38ch; }
+
+    .btn {
+      display: inline-block;
+      background: var(--accent-strong); color: #fff;
+      font-size: 1.25rem; font-weight: 700;
+      text-decoration: none;
+      padding: 1rem 2rem; border-radius: .8rem;
+      box-shadow: 0 6px 20px rgba(47,107,255,.35);
+    }
+    .btn:hover { background: var(--accent); }
+    .btn .arrow { font-weight: 400; }
+
+    main { padding-bottom: 4rem; }
+    section { margin: 2.5rem 0; }
+    h2 { font-size: clamp(1.4rem, 4vw, 1.9rem); margin: 0 0 1rem; }
+
+    .cards { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .card {
+      background: var(--panel); border-radius: 1rem; padding: 1.4rem;
+      border: 1px solid rgba(128,140,180,.18);
+    }
+    .card h3 { margin: 0 0 .4rem; font-size: 1.15rem; }
+    .card p { margin: 0; color: var(--muted); font-size: 1rem; }
+    .card .icon { font-size: 1.8rem; } /* decorative */
+
+    /* Placeholder gallery — drop screenshots in later */
+    .gallery { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    .shot {
+      background: var(--panel); border: 1px dashed rgba(128,140,180,.4);
+      border-radius: 1rem; min-height: 170px;
+      display: flex; align-items: center; justify-content: center;
+      color: var(--muted); text-align: center; padding: 1rem;
+    }
+    .shot img { width: 100%; height: auto; border-radius: .75rem; display: block; }
+
+    .steps { padding-left: 1.2rem; }
+    .steps li { margin: .4rem 0; }
+
+    footer {
+      border-top: 1px solid rgba(128,140,180,.2);
+      padding: 2rem 0; color: var(--muted); font-size: .95rem; text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+
+  <header class="hero">
+    <div class="wrap">
+      <h1>DataSoniPrint</h1>
+      <p class="tagline">Turn scientific data into something you can <strong>feel</strong>, <strong>hear</strong>, and <strong>see</strong>.</p>
+
+      <!-- 🔗 LAUNCH BUTTON — replace href with your Streamlit URL -->
+      <a class="btn" href="https://datasoniprint.streamlit.app">
+        <span class="arrow">▶</span> Launch the app
+      </a>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="wrap">
+
+      <section aria-labelledby="what">
+        <h2 id="what">What it does</h2>
+        <p>
+          Scientific results are overwhelmingly visual — charts and graphs that
+          exclude people with visual impairments and offer nothing tactile.
+          DataSoniPrint converts 2D data into accessible outputs so that
+          <strong>no single sense is required</strong> to experience it.
+        </p>
+        <div class="cards">
+          <div class="card">
+            <div class="icon" aria-hidden="true">🖐️</div>
+            <h3>Tactile 3D print</h3>
+            <p>Export a watertight STL relief you can 3D-print and feel — with optional engraved or braille axis labels.</p>
+          </div>
+          <div class="card">
+            <div class="icon" aria-hidden="true">🔊</div>
+            <h3>Sonification</h3>
+            <p>Hear the data as sound, so it can be experienced without sight.</p>
+          </div>
+          <div class="card">
+            <div class="icon" aria-hidden="true">📈</div>
+            <h3>Visual relief</h3>
+            <p>Generate reliefs from data columns, math formulas, or images.</p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="who">
+        <h2 id="who">Who it helps</h2>
+        <p>
+          A blind researcher can hold the 3D print or listen to the sonification;
+          a sighted researcher can read the chart — everyone works from the same
+          underlying dataset.
+        </p>
+      </section>
+
+      <section aria-labelledby="how">
+        <h2 id="how">How to use it</h2>
+        <ol class="steps">
+          <li>Open the app with the <strong>Launch the app</strong> button above.</li>
+          <li>Upload data (CSV/HDF5/NetCDF/GRIB/ASDF), an image, or enter a formula.</li>
+          <li>Adjust the relief, height, and label options; preview in 3D.</li>
+          <li>Download the STL and print it.</li>
+        </ol>
+      </section>
+
+      <!-- 🖼️ GALLERY — add screenshots later: put images in this folder and
+           replace a placeholder block with: <div class="shot"><img src="preview1.png" alt="..."></div> -->
+      <section aria-labelledby="gallery">
+        <h2 id="gallery">Examples</h2>
+        <p class="tagline" style="margin:0 0 1rem; text-align:left;">Screenshots of previews and printed results — coming soon.</p>
+        <div class="gallery">
+          <div class="shot">Screenshot placeholder<br>(3D preview)</div>
+          <div class="shot">Screenshot placeholder<br>(STL / printed relief)</div>
+          <div class="shot">Screenshot placeholder<br>(braille labels)</div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <p>
+        DataSoniPrint is open source —
+        <a href="https://github.com/Kultkat/DataSoniPrint">source on GitHub</a>.
+        <!-- 🔗 replace with your Streamlit URL -->
+        · <a href="https://datasoniprint.streamlit.app">Open the app</a>
+      </p>
+    </div>
+  </footer>
+</body>
+</html>
