@@ -386,7 +386,8 @@ def evaluate_formula(formula_str, x_range=(-5, 5), y_range=(-5, 5), resolution=5
     x, y = symbols('x y', real=True)
 
     try:
-        expr = sympify(formula_str)
+        # Bind x/y so the parsed expression uses OUR symbols (not fresh ones).
+        expr = sympify(formula_str, locals={"x": x, "y": y})
     except Exception as e:
         raise ValueError(f"Invalid formula: {e}")
 
@@ -395,15 +396,17 @@ def evaluate_formula(formula_str, x_range=(-5, 5), y_range=(-5, 5), resolution=5
     y_vals = np.linspace(y_range[0], y_range[1], resolution)
     xx, yy = np.meshgrid(x_vals, y_vals)
 
-    # Evaluate
-    zz = np.zeros_like(xx)
-    for i in range(resolution):
-        for j in range(resolution):
-            try:
-                val = float(expr.subs({x: xx[i, j], y: yy[i, j]}))
-                zz[i, j] = val
-            except:
-                zz[i, j] = 0.0
+    # Vectorized evaluation over the whole grid via numpy.
+    try:
+        f = sp.lambdify((x, y), expr, modules=["numpy"])
+        zz = np.asarray(f(xx, yy), dtype=float)
+        if zz.shape != xx.shape:  # formula independent of x and/or y → scalar
+            zz = np.broadcast_to(zz, xx.shape).astype(float)
+    except Exception as e:
+        raise ValueError(f"Could not evaluate formula: {e}")
+
+    # Drop non-finite values (e.g. log of negatives) so they don't skew scaling.
+    zz = np.where(np.isfinite(zz), zz, np.nan)
 
     # Normalize to [0, 1]
     return normalize_to_01(zz)
@@ -493,21 +496,304 @@ def solidify_surface(z_grid, base_height_mm=1.0):
 # PHASE 3: Image-to-Relief
 # ─────────────────────────────────────────────────────────────────────────────
 
-def image_to_relief_array(image_path, height_min_mm=0.5, height_max_mm=5.0):
+def _load_grayscale(image_path):
     """
-    Convert image to grayscale, map intensity (0-255) to height (height_min to height_max).
-    Returns normalized 2D array.
+    Open an image as grayscale, compositing transparency onto a WHITE background.
+
+    Plots exported with transparency (e.g. matplotlib ``savefig(transparent=True)``)
+    often store the drawing entirely in the alpha channel with a black luminance
+    channel — a naive ``convert("L")`` would then return all-black and produce a
+    single flat platform. Flattening onto white first preserves the real shape.
     """
     if Image is None:
         raise ImportError("Pillow not installed")
+    img = Image.open(image_path)
+    has_alpha = img.mode in ("RGBA", "LA") or (
+        img.mode == "P" and "transparency" in img.info
+    )
+    if has_alpha:
+        rgba = img.convert("RGBA")
+        bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+        img = Image.alpha_composite(bg, rgba)
+    return img.convert("L")
 
-    img = Image.open(image_path).convert('L')  # Grayscale
-    img_array = np.array(img, dtype=np.float64)
 
-    # Normalize to [0, 1]
-    img_norm = img_array / 255.0
+def image_to_relief_array(image_path, invert=True, bg_threshold=0.1):
+    """
+    Convert an image to a normalized relief grid in [0, 1].
 
-    return img_norm
+    The image is read as grayscale (brightness 0-255). With ``invert=True``
+    (default) dark pixels become HIGH and light pixels become LOW — so the
+    data drawn on a typical white-background plot becomes a raised relief and
+    the background flattens to the base.
+
+    ``bg_threshold`` (0-1) is a background cutoff applied AFTER inversion:
+    everything below the cutoff is clamped to 0 (the flat build-plate base),
+    so faint background texture and anti-aliasing halos don't lift the plate.
+
+    Returns a (H, W) float array normalized to [0, 1], where 0 == background
+    (base only) and 1 == the tallest data feature.
+    """
+    img = _load_grayscale(image_path)  # Grayscale (B&W), alpha flattened to white
+    v = np.array(img, dtype=np.float64) / 255.0  # → [0, 1]
+
+    if invert:
+        v = 1.0 - v  # dark data → high, white background → low
+
+    # Flatten background: drop everything below the cutoff to 0.
+    if bg_threshold > 0:
+        v = np.clip(v - bg_threshold, 0.0, None)
+
+    return normalize_to_01(v)
+
+
+def detect_text_regions(image_path, min_confidence=40):
+    """
+    OCR the image and return word bounding boxes as
+    ``[(x, y, w, h, text), ...]`` in image-pixel coordinates.
+
+    Requires the Tesseract engine + the ``pytesseract`` binding. Raises a clear,
+    actionable error if either is missing so the caller can fall back gracefully.
+    """
+    try:
+        import pytesseract
+    except ImportError as e:
+        raise ImportError(
+            "pytesseract not installed — run `pip install pytesseract`."
+        ) from e
+    if Image is None:
+        raise ImportError("Pillow not installed")
+
+    img = _load_grayscale(image_path)
+    try:
+        data = pytesseract.image_to_data(
+            img, output_type=pytesseract.Output.DICT
+        )
+    except Exception as e:  # TesseractNotFoundError and friends
+        raise RuntimeError(
+            "Tesseract OCR engine not found. Install it with "
+            "`sudo apt-get install tesseract-ocr` (Linux) or "
+            "`brew install tesseract` (macOS)."
+        ) from e
+
+    boxes = []
+    for i in range(len(data["text"])):
+        txt = (data["text"][i] or "").strip()
+        try:
+            conf = float(data["conf"][i])
+        except (ValueError, TypeError):
+            conf = -1.0
+        if txt and conf >= min_confidence:
+            boxes.append((
+                int(data["left"][i]), int(data["top"][i]),
+                int(data["width"][i]), int(data["height"][i]), txt,
+            ))
+    return boxes
+
+
+def build_image_relief(image_path, invert=True, bg_threshold=0.1,
+                       relief_min_mm=0.1, relief_max_mm=5.0,
+                       binary=False, text_boxes=None,
+                       glyph_level=0.5, box_pad=2):
+    """
+    Build the DATA relief grid from a plot image (labels applied separately).
+
+    The result is normalized as a FRACTION of the model's height scale so that
+    ``base_mm + grid * height_mm`` yields physical millimetres. Two styles:
+
+      - grayscale (``binary=False``): pixel brightness becomes a VARIABLE height,
+        ``relief_min_mm..relief_max_mm`` — a full 3D relief (colour/shade → Z).
+      - binary (``binary=True``): every data pixel gets the SAME height (grid=1.0,
+        i.e. one flat step) — a uniform B/W relief you can see and feel. The
+        actual step height is set by the caller's height scale.
+
+    Background flattens to 0 (the base plate). If ``text_boxes`` (from
+    :func:`detect_text_regions`) is given, those regions are EXCLUDED from the
+    data relief so labels aren't raised as data — labels are rendered later by
+    :func:`apply_labels` once the physical mm dimensions are known.
+
+    Returns ``(grid, glyph_mask)`` where ``glyph_mask`` marks the dark ink
+    strokes inside the text boxes (used by the "engrave" label mode). Both are in
+    image (row 0 = top) orientation; flip vertically at render time to match the
+    source image.
+    """
+    img = _load_grayscale(image_path)
+    gray = np.array(img, dtype=np.float64) / 255.0  # [0,1], 0 = black ink
+    v = (1.0 - gray) if invert else gray            # data (dark) → high
+    h, w = v.shape
+
+    relief_max_mm = max(relief_max_mm, 0.1)
+    relief_min_mm = min(max(relief_min_mm, 0.0), relief_max_mm)
+
+    # Text-region mask (rectangles) + glyph mask (dark ink within them).
+    text_region = np.zeros((h, w), dtype=bool)
+    glyph = np.zeros((h, w), dtype=bool)
+    for box in (text_boxes or []):
+        x, y, bw, bh = box[0], box[1], box[2], box[3]
+        x0, y0 = max(0, x - box_pad), max(0, y - box_pad)
+        x1, y1 = min(w, x + bw + box_pad), min(h, y + bh + box_pad)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        text_region[y0:y1, x0:x1] = True
+        glyph[y0:y1, x0:x1] = v[y0:y1, x0:x1] > glyph_level
+
+    # Data relief everywhere EXCEPT the text regions.
+    data = v.copy()
+    if bg_threshold > 0:
+        data = np.clip(data - bg_threshold, 0.0, None)
+    data[text_region] = 0.0
+    data = normalize_to_01(data)  # [0,1] across the data only
+
+    grid = np.zeros((h, w), dtype=np.float64)
+    data_mask = data > 0
+    if binary:
+        grid[data_mask] = 1.0  # single uniform step for every data pixel
+    else:
+        grid[data_mask] = (
+            relief_min_mm + data[data_mask] * (relief_max_mm - relief_min_mm)
+        ) / relief_max_mm
+
+    return grid, glyph
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Axis labels — engrave (text) or emboss (braille)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 6-dot braille cell, dot numbering:
+#     1 4
+#     2 5
+#     3 6
+# Each entry maps a character to the dots that are raised.
+_BRAILLE_LETTERS = {
+    "a": (1,), "b": (1, 2), "c": (1, 4), "d": (1, 4, 5), "e": (1, 5),
+    "f": (1, 2, 4), "g": (1, 2, 4, 5), "h": (1, 2, 5), "i": (2, 4), "j": (2, 4, 5),
+    "k": (1, 3), "l": (1, 2, 3), "m": (1, 3, 4), "n": (1, 3, 4, 5), "o": (1, 3, 5),
+    "p": (1, 2, 3, 4), "q": (1, 2, 3, 4, 5), "r": (1, 2, 3, 5), "s": (2, 3, 4),
+    "t": (2, 3, 4, 5), "u": (1, 3, 6), "v": (1, 2, 3, 6), "w": (2, 4, 5, 6),
+    "x": (1, 3, 4, 6), "y": (1, 3, 4, 5, 6), "z": (1, 3, 5, 6),
+}
+# Digits reuse the a–j shapes, introduced by the number sign.
+_BRAILLE_DIGITS = {
+    "1": "a", "2": "b", "3": "c", "4": "d", "5": "e",
+    "6": "f", "7": "g", "8": "h", "9": "i", "0": "j",
+}
+_BRAILLE_PUNCT = {
+    ".": (2, 5, 6), ",": (2,), "-": (3, 6), ":": (2, 5), ";": (2, 3),
+    "(": (1, 2, 6), ")": (3, 4, 5), "/": (3, 4), "%": (1, 4, 6),
+}
+_BRAILLE_NUMBER_SIGN = (3, 4, 5, 6)
+_BRAILLE_CAPITAL_SIGN = (6,)
+
+
+def text_to_braille_cells(text):
+    """
+    Translate a string into a list of Grade-1 (uncontracted) braille cells.
+
+    Each cell is a tuple of raised dot numbers (1–6); ``()`` is a blank space.
+    Digits are preceded by the number sign, capitals by the capital sign.
+    """
+    cells = []
+    in_number = False
+    for ch in text:
+        if ch == " ":
+            cells.append(())
+            in_number = False
+            continue
+        if ch.isupper():
+            cells.append(_BRAILLE_CAPITAL_SIGN)
+            ch = ch.lower()
+        if ch.isdigit():
+            if not in_number:
+                cells.append(_BRAILLE_NUMBER_SIGN)
+                in_number = True
+            cells.append(_BRAILLE_LETTERS[_BRAILLE_DIGITS[ch]])
+            continue
+        in_number = False
+        if ch in _BRAILLE_LETTERS:
+            cells.append(_BRAILLE_LETTERS[ch])
+        elif ch in _BRAILLE_PUNCT:
+            cells.append(_BRAILLE_PUNCT[ch])
+        # unknown characters are silently skipped
+    return cells
+
+
+def _stamp_dot(grid, cx, cy, rx, ry, value):
+    """Raise an elliptical dot footprint in the grid to at least ``value``."""
+    h, w = grid.shape
+    x0, x1 = max(0, int(cx - rx)), min(w, int(np.ceil(cx + rx)) + 1)
+    y0, y1 = max(0, int(cy - ry)), min(h, int(np.ceil(cy + ry)) + 1)
+    if x1 <= x0 or y1 <= y0:
+        return
+    ys, xs = np.ogrid[y0:y1, x0:x1]
+    rx = max(rx, 0.5)
+    ry = max(ry, 0.5)
+    mask = ((xs - cx) / rx) ** 2 + ((ys - cy) / ry) ** 2 <= 1.0
+    sub = grid[y0:y1, x0:x1]
+    sub[mask] = np.maximum(sub[mask], value)
+    grid[y0:y1, x0:x1] = sub
+
+
+def apply_labels(grid, glyph_mask, text_boxes, mode,
+                 width_mm, depth_mm, height_mm,
+                 engrave_depth_mm=0.3, base_mm=1.0,
+                 dot_height_mm=0.6, dot_dia_mm=1.5,
+                 dot_pitch_mm=2.5, cell_pitch_mm=6.0):
+    """
+    Apply axis labels onto a copy of the data relief ``grid`` and return it.
+
+    ``grid`` values are fractions of ``height_mm`` (so ``value * height_mm`` is
+    millimetres above the plate top). ``mode`` is one of:
+
+      - ``"none"``    — return the grid unchanged.
+      - ``"engrave"`` — carve the glyph ink (``glyph_mask``) ``engrave_depth_mm``
+                        into the plate (negative values).
+      - ``"braille"`` — emboss standard-size raised braille dots for each detected
+                        label's recognized text, at its location.
+
+    Braille geometry is in absolute millimetres, converted to grid pixels via the
+    physical ``width_mm``/``depth_mm`` and the grid resolution — so dots stay the
+    correct tactile size regardless of image resolution.
+    """
+    out = grid.copy()
+    height_mm = max(height_mm, 0.1)
+
+    if mode == "engrave":
+        depth = max(0.0, min(engrave_depth_mm, base_mm - 0.2))
+        if depth > 0 and glyph_mask is not None:
+            out[glyph_mask] = -depth / height_mm
+        return out
+
+    if mode == "braille":
+        h, w = out.shape
+        mmx = width_mm / max(w, 1)   # mm per pixel (x)
+        mmy = depth_mm / max(h, 1)   # mm per pixel (y)
+        rx = (dot_dia_mm / 2.0) / mmx
+        ry = (dot_dia_mm / 2.0) / mmy
+        value = dot_height_mm / height_mm
+        # dot number → (column, row) within the cell
+        dot_pos = {1: (0, 0), 2: (0, 1), 3: (0, 2),
+                   4: (1, 0), 5: (1, 1), 6: (1, 2)}
+        for box in (text_boxes or []):
+            x, y, bw, bh = box[0], box[1], box[2], box[3]
+            text = box[4] if len(box) > 4 else ""
+            cells = text_to_braille_cells(text)
+            if not cells:
+                continue
+            # Anchor: start at the box's left, vertically centred on the box.
+            start_x_mm = x * mmx
+            mid_y_mm = (y + bh / 2.0) * mmy
+            top_y_mm = mid_y_mm - dot_pitch_mm  # 3-row cell centred on the box
+            for ci, cell in enumerate(cells):
+                cell_x_mm = start_x_mm + ci * cell_pitch_mm
+                for dot in cell:
+                    col, row = dot_pos[dot]
+                    cx_mm = cell_x_mm + col * dot_pitch_mm
+                    cy_mm = top_y_mm + row * dot_pitch_mm
+                    _stamp_dot(out, cx_mm / mmx, cy_mm / mmy, rx, ry, value)
+        return out
+
+    return out  # "none" or unknown
 
 
 # ─────────────────────────────────────────────────────────────────────────────

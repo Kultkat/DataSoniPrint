@@ -9,6 +9,7 @@ networkx>=3.0
 numpy-stl>=3.0.0
 sympy>=1.12
 pillow>=10.0.0
+pytesseract>=0.3.13  # OCR for engraving axis labels — needs the `tesseract-ocr` system binary (see packages.txt)
 h5py>=3.10.0
 netCDF4>=1.6.0
 cfgrib>=0.9.0
