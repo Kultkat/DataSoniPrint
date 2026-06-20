@@ -433,6 +433,20 @@ elif mode == "🖼️ From Image":
                     st.session_state.current_z_grid = grid
                     st.session_state.height_mm = float(max(height_scale, 0.1))
                     st.session_state.source_name = Path(uploaded_file.name).stem
+
+                    # Preserve the image's aspect ratio in the bed dimensions
+                    # (formula mode stays square). Fit the longer side to the
+                    # 200mm bed and scale the shorter to match — otherwise a
+                    # non-square image is stretched onto the default 150×100mm.
+                    gh, gw = grid.shape  # rows → depth (y), cols → width (x)
+                    if gw >= gh:
+                        bed_w = 200
+                        bed_d = max(10, min(200, round(200 * gh / gw / 10) * 10))
+                    else:
+                        bed_d = 200
+                        bed_w = max(10, min(200, round(200 * gw / gh / 10) * 10))
+                    st.session_state.width_mm = int(bed_w)
+                    st.session_state.depth_mm = int(bed_d)
                     st.session_state.label_spec = {
                         "mode": effective_mode,
                         "boxes": text_boxes,
