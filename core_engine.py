@@ -496,7 +496,15 @@ def solidify_surface(z_grid, base_height_mm=1.0):
 # PHASE 3: Image-to-Relief
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _load_grayscale(image_path):
+# Hard cap on the longest image side before it becomes a mesh. Each pixel
+# becomes ~2 vertices and ~4 mesh faces in scale_to_bed, so an uncapped
+# multi-megapixel photo produces tens of millions of faces and OOM-kills the
+# (1 GB) Streamlit Cloud worker. 800 px keeps the worst case near ~2M faces
+# while still giving ~8 px/mm of detail on a 100 mm plate (ample for braille).
+MAX_RELIEF_DIM = 800
+
+
+def _load_grayscale(image_path, max_dim=MAX_RELIEF_DIM):
     """
     Open an image as grayscale, compositing transparency onto a WHITE background.
 
@@ -504,6 +512,11 @@ def _load_grayscale(image_path):
     often store the drawing entirely in the alpha channel with a black luminance
     channel — a naive ``convert("L")`` would then return all-black and produce a
     single flat platform. Flattening onto white first preserves the real shape.
+
+    Images larger than ``max_dim`` on their longest side are downsampled
+    (preserving aspect ratio) so the resulting mesh stays within memory. Because
+    both OCR (:func:`detect_text_regions`) and the relief builder go through this
+    one function, text-box pixel coordinates always match the relief grid.
     """
     if Image is None:
         raise ImportError("Pillow not installed")
@@ -515,7 +528,10 @@ def _load_grayscale(image_path):
         rgba = img.convert("RGBA")
         bg = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
         img = Image.alpha_composite(bg, rgba)
-    return img.convert("L")
+    img = img.convert("L")
+    if max_dim and max(img.size) > max_dim:
+        img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+    return img
 
 
 def image_to_relief_array(image_path, invert=True, bg_threshold=0.1):
@@ -823,94 +839,85 @@ def scale_to_bed(z_grid, target_width_mm=100, target_depth_mm=100,
     scaled_d = target_depth_mm * scale
     scaled_h = target_height_mm * scale
 
-    # Build mesh
+    # Build mesh. This is fully vectorized with NumPy: a pure-Python double loop
+    # over every pixel takes minutes for an 800px relief (~2M faces) and makes
+    # the app look hung. The vertex layout and face winding below are identical
+    # to the original loop version, so the resulting watertight mesh is unchanged.
     x_coords = np.linspace(0, scaled_w, w)
     y_coords = np.linspace(0, scaled_d, h)
+    xx, yy = np.meshgrid(x_coords, y_coords)  # both (h, w), row-major like the loop
 
-    vertices = []
-    faces = []
+    # Vertices: top surface (1mm base + scaled height) then bottom surface (z=0).
+    top = np.stack([xx, yy, 1.0 + z_grid * scaled_h], axis=-1).reshape(-1, 3)
+    bot = np.stack([xx, yy, np.zeros_like(xx)], axis=-1).reshape(-1, 3)
+    vertices = np.vstack([top, bot])
 
-    # Top surface
-    for i in range(h):
-        for j in range(w):
-            z_val = 1.0 + z_grid[i, j] * scaled_h  # 1mm base + scaled height
-            vertices.append([x_coords[j], y_coords[i], z_val])
-
-    # Bottom surface (1mm base)
-    for i in range(h):
-        for j in range(w):
-            vertices.append([x_coords[j], y_coords[i], 0.0])
-
-    # Top faces
-    for i in range(h - 1):
-        for j in range(w - 1):
-            v0 = i * w + j
-            v1 = i * w + (j + 1)
-            v2 = (i + 1) * w + (j + 1)
-            v3 = (i + 1) * w + j
-
-            faces.append([v0, v1, v2])
-            faces.append([v0, v2, v3])
-
-    # Bottom faces
     bot_start = h * w
-    for i in range(h - 1):
-        for j in range(w - 1):
-            v0 = bot_start + i * w + j
-            v1 = bot_start + i * w + (j + 1)
-            v2 = bot_start + (i + 1) * w + (j + 1)
-            v3 = bot_start + (i + 1) * w + j
+    idx = np.arange(bot_start).reshape(h, w)  # vertex index of each top grid cell
 
-            faces.append([v0, v2, v1])
-            faces.append([v0, v3, v2])
+    # Top faces (two triangles per quad, outward normal +Z).
+    a = idx[:-1, :-1].ravel()
+    b = idx[:-1, 1:].ravel()
+    c = idx[1:, 1:].ravel()
+    d = idx[1:, :-1].ravel()
+    top_faces = np.vstack([np.stack([a, b, c], 1), np.stack([a, c, d], 1)])
 
-    # Side faces — all four perimeter walls must be stitched
-    # to make the mesh watertight (manifold).
+    # Bottom faces (reversed winding so the normal points -Z).
+    ba, bb, bc, bd = a + bot_start, b + bot_start, c + bot_start, d + bot_start
+    bot_faces = np.vstack([np.stack([ba, bc, bb], 1), np.stack([ba, bd, bc], 1)])
 
-    # Front wall (i = 0, y = 0) — outward normal -Y
-    for j in range(w - 1):
-        v0_t = j
-        v1_t = j + 1
-        v0_b = bot_start + j
-        v1_b = bot_start + j + 1
-        faces.append([v0_t, v1_t, v1_b])
-        faces.append([v0_t, v1_b, v0_b])
-
-    # Back wall (i = h-1, y = scaled_d) — outward normal +Y
+    # Side walls — stitch all four perimeters so the mesh is watertight.
+    j = np.arange(w - 1)
+    i = np.arange(h - 1)
     back_row = (h - 1) * w
-    for j in range(w - 1):
-        v0_t = back_row + j
-        v1_t = back_row + j + 1
-        v0_b = bot_start + back_row + j
-        v1_b = bot_start + back_row + j + 1
-        faces.append([v0_t, v1_b, v1_t])
-        faces.append([v0_t, v0_b, v1_b])
 
-    # Left wall (j = 0, x = 0) — outward normal -X
-    for i in range(h - 1):
-        v0_t = i * w
-        v1_t = (i + 1) * w
-        v0_b = bot_start + i * w
-        v1_b = bot_start + (i + 1) * w
-        faces.append([v0_t, v0_b, v1_b])
-        faces.append([v0_t, v1_b, v1_t])
+    # Front (i=0, -Y) and back (i=h-1, +Y) walls.
+    front = np.vstack([
+        np.stack([j, j + 1, bot_start + j + 1], 1),
+        np.stack([j, bot_start + j + 1, bot_start + j], 1),
+    ])
+    back = np.vstack([
+        np.stack([back_row + j, bot_start + back_row + j + 1, back_row + j + 1], 1),
+        np.stack([back_row + j, bot_start + back_row + j, bot_start + back_row + j + 1], 1),
+    ])
 
-    # Right wall (j = w-1, x = scaled_w) — outward normal +X
-    for i in range(h - 1):
-        v0_t = i * w + (w - 1)
-        v1_t = (i + 1) * w + (w - 1)
-        v0_b = bot_start + i * w + (w - 1)
-        v1_b = bot_start + (i + 1) * w + (w - 1)
-        faces.append([v0_t, v1_t, v1_b])
-        faces.append([v0_t, v1_b, v0_b])
+    # Left (j=0, -X) and right (j=w-1, +X) walls.
+    lt0, lt1 = i * w, (i + 1) * w
+    left = np.vstack([
+        np.stack([lt0, bot_start + lt0, bot_start + lt1], 1),
+        np.stack([lt0, bot_start + lt1, lt1], 1),
+    ])
+    rt0, rt1 = i * w + (w - 1), (i + 1) * w + (w - 1)
+    right = np.vstack([
+        np.stack([rt0, rt1, bot_start + rt1], 1),
+        np.stack([rt0, bot_start + rt1, bot_start + rt0], 1),
+    ])
 
-    # Create trimesh
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces)
-    # trimesh 4.x: dedup + weld coincident vertices for a clean manifold
-    mesh.update_faces(mesh.unique_faces())
-    mesh.merge_vertices()
-    # Ensure outward-facing normals (positive volume) so slicers don't flip parts
-    mesh.fix_normals()
+    groups = [top_faces, bot_faces, front, back, left, right]
+    faces = np.vstack(groups)
+
+    # Orient every face outward. trimesh's fix_normals() would do this, but it
+    # runs an adjacency-graph winding traversal that takes minutes on a ~2M-face
+    # relief (the app looks hung). Because this is a heightfield extrusion we
+    # know each face group's outward direction analytically, so we flip mis-wound
+    # faces in one vectorized O(n) pass instead: compute each triangle's geometric
+    # normal and reverse the winding of any whose normal points inward.
+    outward = np.vstack([
+        np.tile(d, (len(g), 1))
+        for g, d in zip(groups, [(0, 0, 1), (0, 0, -1),   # top +Z, bottom -Z
+                                 (0, -1, 0), (0, 1, 0),    # front -Y, back +Y
+                                 (-1, 0, 0), (1, 0, 0)])   # left -X, right +X
+    ])
+    tris = vertices[faces]
+    normals = np.cross(tris[:, 1] - tris[:, 0], tris[:, 2] - tris[:, 0])
+    flip = (normals * outward).sum(1) < 0
+    faces[flip] = faces[flip][:, ::-1]
+
+    # process=False: skip trimesh's automatic (and slow) merge/winding pass — the
+    # walls already share the top/bottom vertices, so the mesh is watertight as
+    # built and the winding is now correct.
+    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+    mesh.merge_vertices()  # weld any coincident points for a clean manifold
 
     return mesh, (scaled_w, scaled_d, scaled_h, scale)
 
@@ -931,6 +938,9 @@ def mesh_to_stl_bytes(mesh):
         raise ImportError("trimesh not installed")
 
     buf = io.BytesIO()
-    mesh.export(buf, file_type='stl_ascii')
+    # Binary STL: ~50 bytes/triangle vs. ~250 for ASCII. On a large relief the
+    # ASCII text buffer alone can reach multiple GB and OOM the worker; binary
+    # keeps it manageable and exports faster. Slicers read both identically.
+    mesh.export(buf, file_type='stl')
     buf.seek(0)
     return buf.read()

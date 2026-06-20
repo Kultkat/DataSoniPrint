@@ -9,6 +9,7 @@ import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 import io
+import re
 import tempfile
 
 from core_engine import (
@@ -53,6 +54,10 @@ if "headers" not in st.session_state:
     st.session_state.headers = None
 if "height_mm" not in st.session_state:
     st.session_state.height_mm = 20.0
+if "width_mm" not in st.session_state:
+    st.session_state.width_mm = 150
+if "depth_mm" not in st.session_state:
+    st.session_state.depth_mm = 100
 if "label_spec" not in st.session_state:
     st.session_state.label_spec = None  # image-mode axis-label rendering plan
 if "source_name" not in st.session_state:
@@ -284,7 +289,14 @@ matters — overall constants don't change the relief.
                 )
                 st.session_state.current_z_grid = z_grid
                 st.session_state.label_spec = None
-                st.session_state.source_name = "formula"
+                # Name the STL after the formula itself (sanitized to a safe,
+                # unique filename stem) so each expression downloads distinctly —
+                # mirroring how image/data modes name the file after the upload.
+                safe = re.sub(r"[^0-9A-Za-z]+", "_", formula).strip("_")[:40]
+                st.session_state.source_name = f"formula_{safe}" if safe else "formula"
+                # Formula grids are square → default to a square 100×100mm bed.
+                st.session_state.width_mm = 100
+                st.session_state.depth_mm = 100
                 st.success("✓ Formula evaluated and mesh generated")
             except Exception as e:
                 st.error(f"❌ Error: {e}")
@@ -458,9 +470,9 @@ if st.session_state.current_z_grid is not None:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        width_mm = st.slider("Width (mm):", 50, 200, 150, step=10)
+        width_mm = st.slider("Width (mm):", 10, 200, step=10, key="width_mm")
     with col2:
-        depth_mm = st.slider("Depth (mm):", 10, 200, 100, step=10)
+        depth_mm = st.slider("Depth (mm):", 10, 200, step=10, key="depth_mm")
     with col3:
         height_mm = st.slider("Height scale (mm):", 0.5, 200.0, step=0.5, key="height_mm")
 
