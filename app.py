@@ -17,7 +17,18 @@ from core_engine import (
     evaluate_formula, generate_preview_mesh, scale_to_bed, mesh_to_stl_bytes,
     image_to_relief_array, spread_to_grid,
     detect_text_regions, build_image_relief, apply_labels,
+    EQUATION_GALLERY, evaluate_gallery_item,
 )
+
+
+def _bed_from_domain(xspan, yspan):
+    """Bed (width_mm, depth_mm) matching a domain's aspect ratio: longer side
+    fills the 200mm bed, the other is scaled to match (rounded to the 10mm slider
+    step). Keeps formula/gallery reliefs from being squished into a square."""
+    xspan, yspan = abs(xspan) or 1.0, abs(yspan) or 1.0
+    if xspan >= yspan:
+        return 200, max(10, min(200, round(200 * yspan / xspan / 10) * 10))
+    return max(10, min(200, round(200 * xspan / yspan / 10) * 10)), 200
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Streamlit Configuration
@@ -229,31 +240,106 @@ if mode == "📊 From Data Column":
 # ─────────────────────────────────────────────────────────────────────────────
 
 elif mode == "🔢 From Math Formula":
-    st.header("🔢 Enter a Mathematical Formula")
+    st.header("🔢 Equations & Formulas")
 
-    formula = st.text_input(
-        "Formula (e.g., 'sin(x)*cos(y)', 'exp(-x**2 - y**2)', 'sqrt(x**2 + y**2)'):",
-        value="sin(x)*cos(y)",
-        help=(
-            "Enter the right-hand side only — no 'z =' or 'f(x,y) ='. "
-            "Use the variables x and y, and plain ASCII math."
-        ),
+    GALLERY_NAMES = ["✏️ Custom formula"] + [it["name"] for it in EQUATION_GALLERY]
+    choice = st.selectbox(
+        "Pick a famous equation, or write your own:",
+        GALLERY_NAMES,
+        help="Curated equations come with an explanation and printable defaults. "
+             "Choose '✏️ Custom formula' to type any expression yourself.",
     )
+    selected = (None if choice == GALLERY_NAMES[0]
+                else EQUATION_GALLERY[GALLERY_NAMES.index(choice) - 1])
 
-    with st.expander("ℹ️ Formula format — what works and what doesn't"):
-        st.markdown(
-            """
+    # ── Curated gallery equation ─────────────────────────────────────────────
+    if selected:
+        st.latex(selected["latex"])
+        st.info(selected["blurb"])
+        if selected["type"] == "complex":
+            st.caption(
+                f"Complex function over z = x + i·y — height shows the "
+                f"**{selected['projection']}** projection of f(z). "
+                "This is how complex functions become 3D surfaces."
+            )
+        elif selected["type"] == "mandelbrot":
+            st.caption("Iterated map z → z² + c — height shows how fast each point escapes.")
+        st.code(selected["formula"])
+
+        default_res = int(selected.get("resolution", 120))
+        resolution = st.slider("Detail (grid resolution):", 40, 260,
+                               min(default_res, 260), step=10)
+        if selected["type"] == "complex":
+            st.caption("⏳ Complex equations are evaluated point-by-point and capped "
+                       "at 150 for speed — Riemann ζ takes a few seconds.")
+
+        if st.button("▶ Generate this equation", key="gen_gallery"):
+            with st.spinner(f"Rendering {selected['name']}…"):
+                try:
+                    res = (min(resolution, 150) if selected["type"] == "complex"
+                           else resolution)
+                    z_grid = evaluate_gallery_item(selected, resolution=res)
+                    st.session_state.current_z_grid = z_grid
+                    st.session_state.label_spec = None
+                    st.session_state.source_name = f"equation_{selected['key']}"
+                    st.session_state.height_mm = float(selected.get("height_mm", 20.0))
+                    # Match the bed to the equation's domain so it isn't squished.
+                    bw, bd = _bed_from_domain(
+                        selected["x_range"][1] - selected["x_range"][0],
+                        selected["y_range"][1] - selected["y_range"][0],
+                    )
+                    st.session_state.width_mm, st.session_state.depth_mm = bw, bd
+                    st.success(f"✓ {selected['name']} rendered")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
+
+    # ── Custom free-form formula ─────────────────────────────────────────────
+    else:
+        formula = st.text_input(
+            "Formula (e.g., 'sin(x)*cos(y)', 'exp(-x**2 - y**2)', 'zeta(z)'):",
+            value="sin(x)*cos(y)",
+            help=(
+                "Enter the right-hand side only — no 'z =' or 'f(x,y) ='. "
+                "Real mode uses variables x and y; complex mode uses z = x + i·y."
+            ),
+        )
+
+        complex_mode = st.checkbox(
+            "Complex function f(z), with z = x + i·y",
+            help="Treats the input as a function of a complex variable and uses a "
+                 "real projection as height — this is how Riemann zeta, gamma and "
+                 "other complex functions become surfaces. Special functions like "
+                 "zeta(z) and gamma(z) are available in this mode.",
+        )
+        projection = "abs"
+        if complex_mode:
+            projection = st.selectbox(
+                "Height shows:",
+                ["abs", "re", "im", "phase"],
+                format_func=lambda p: {
+                    "abs": "|f(z)| — magnitude",
+                    "re": "Re f(z) — real part",
+                    "im": "Im f(z) — imaginary part",
+                    "phase": "arg f(z) — phase",
+                }[p],
+            )
+
+        with st.expander("ℹ️ Formula format — what works and what doesn't"):
+            st.markdown(
+                """
 **Required format**
 - **Right-hand side only** — type `sin(x)*cos(y)`, not `z = sin(x)*cos(y)`.
-- **Variables are `x` and `y`** (the two grid axes). A formula using only `x`
-  is allowed — it's extruded along `y`.
+- **Real mode:** variables are `x` and `y` (the two grid axes).
+- **Complex mode:** the variable is `z = x + i·y`; tick the box above. Then
+  `zeta(z)`, `gamma(z)`, `1/z`, `z**3`, etc. all work — height is the chosen
+  projection (`|f|`, real, imaginary, or phase).
 - **Plain ASCII math:** `*` multiply · `**` power · `/` divide · `+ -` (a normal
   hyphen-minus). Functions: `sin cos tan exp log sqrt abs`, constant `pi`.
 
 **✅ Examples**
 - `sin(x)*cos(y)`
 - `exp(-x**2 - y**2)`
-- `(2/(sqrt(3)*pi**(1/4)))*(1-(x**2+y**2))*exp(-(x**2+y**2)/2)`  *(Mexican-hat wavelet)*
+- `zeta(z)`  *(complex mode — the Riemann zeta function)*
 
 **❌ Won't work**
 - An assignment / left-hand side: `ψ(t) =`, `z =`
@@ -266,40 +352,46 @@ elif mode == "🔢 From Math Formula":
 The height is **normalized** to the Height-scale slider, so only the *shape*
 matters — overall constants don't change the relief.
 """
-        )
+            )
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        x_range_min = st.number_input("X range (min):", value=-5.0)
-        x_range_max = st.number_input("X range (max):", value=5.0)
-    with col2:
-        y_range_min = st.number_input("Y range (min):", value=-5.0)
-        y_range_max = st.number_input("Y range (max):", value=5.0)
-    with col3:
-        resolution = st.slider("Grid Resolution:", 20, 200, 80, step=10)
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            x_range_min = st.number_input("X range (min):", value=-5.0)
+            x_range_max = st.number_input("X range (max):", value=5.0)
+        with col2:
+            y_range_min = st.number_input("Y range (min):", value=-5.0)
+            y_range_max = st.number_input("Y range (max):", value=5.0)
+        with col3:
+            res_max = 150 if complex_mode else 200
+            resolution = st.slider("Grid Resolution:", 20, res_max,
+                                   min(80, res_max), step=10)
 
-    if st.button("▶ Generate from Formula", key="gen_formula"):
-        with st.spinner("Evaluating formula and generating mesh..."):
-            try:
-                z_grid = evaluate_formula(
-                    formula,
-                    x_range=(x_range_min, x_range_max),
-                    y_range=(y_range_min, y_range_max),
-                    resolution=resolution
-                )
-                st.session_state.current_z_grid = z_grid
-                st.session_state.label_spec = None
-                # Name the STL after the formula itself (sanitized to a safe,
-                # unique filename stem) so each expression downloads distinctly —
-                # mirroring how image/data modes name the file after the upload.
-                safe = re.sub(r"[^0-9A-Za-z]+", "_", formula).strip("_")[:40]
-                st.session_state.source_name = f"formula_{safe}" if safe else "formula"
-                # Formula grids are square → default to a square 100×100mm bed.
-                st.session_state.width_mm = 100
-                st.session_state.depth_mm = 100
-                st.success("✓ Formula evaluated and mesh generated")
-            except Exception as e:
-                st.error(f"❌ Error: {e}")
+        if st.button("▶ Generate from Formula", key="gen_formula"):
+            with st.spinner("Evaluating formula and generating mesh..."):
+                try:
+                    z_grid = evaluate_formula(
+                        formula,
+                        x_range=(x_range_min, x_range_max),
+                        y_range=(y_range_min, y_range_max),
+                        resolution=resolution,
+                        complex_mode=complex_mode,
+                        projection=projection,
+                        clip_percent=(1.0 if complex_mode else None),
+                    )
+                    st.session_state.current_z_grid = z_grid
+                    st.session_state.label_spec = None
+                    # Name the STL after the formula itself (sanitized to a safe,
+                    # unique filename stem) so each expression downloads distinctly.
+                    safe = re.sub(r"[^0-9A-Za-z]+", "_", formula).strip("_")[:40]
+                    prefix = "complex" if complex_mode else "formula"
+                    st.session_state.source_name = f"{prefix}_{safe}" if safe else prefix
+                    # Match the bed to the formula's domain so it isn't squished.
+                    bw, bd = _bed_from_domain(x_range_max - x_range_min,
+                                              y_range_max - y_range_min)
+                    st.session_state.width_mm, st.session_state.depth_mm = bw, bd
+                    st.success("✓ Formula evaluated and mesh generated")
+                except Exception as e:
+                    st.error(f"❌ Error: {e}")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MODE 3: Image

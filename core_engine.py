@@ -41,6 +41,11 @@ except ImportError:
     sp = None
 
 try:
+    import mpmath  # ships with sympy; used for complex special functions (zeta, gamma)
+except ImportError:
+    mpmath = None
+
+try:
     from PIL import Image
 except ImportError:
     Image = None
@@ -375,41 +380,247 @@ def spread_to_grid(x_data, y_data, z_data, resolution=100, mode="reshape"):
 # PHASE 2: Formula Engine
 # ─────────────────────────────────────────────────────────────────────────────
 
-def evaluate_formula(formula_str, x_range=(-5, 5), y_range=(-5, 5), resolution=50):
+def evaluate_formula(formula_str, x_range=(-5, 5), y_range=(-5, 5), resolution=50,
+                     complex_mode=False, projection="abs",
+                     clip_percent=None, log_scale=False):
     """
-    Evaluate a sympy formula like 'sin(x)*cos(y)' on a grid.
-    Returns normalized 2D array (z values).
+    Evaluate a formula on a grid and return a normalized 2D height array [0, 1].
+
+    Two modes:
+      - real (default): ``z = f(x, y)`` over the real plane, e.g. 'sin(x)*cos(y)'.
+      - complex (``complex_mode=True``): the variable is ``z = x + i·y`` and the
+        height is a real *projection* of f(z) — one of 'abs', 're', 'im', 'phase'.
+        This is how complex functions (Riemann zeta, gamma, polynomials) become
+        printable surfaces. Complex evaluation uses mpmath, so special functions
+        like ``zeta(z)`` and ``gamma(z)`` work.
+
+    Printability helpers (functions with poles spike to infinity otherwise):
+      - ``clip_percent``: clip the field to its [p, 100-p] percentiles (e.g. 1).
+      - ``log_scale``: compress with log1p before normalizing (tames sharp peaks).
     """
     if sp is None:
         raise ImportError("sympy not installed")
 
-    x, y = symbols('x y', real=True)
-
-    try:
-        # Bind x/y so the parsed expression uses OUR symbols (not fresh ones).
-        expr = sympify(formula_str, locals={"x": x, "y": y})
-    except Exception as e:
-        raise ValueError(f"Invalid formula: {e}")
-
-    # Generate grid
     x_vals = np.linspace(x_range[0], x_range[1], resolution)
     y_vals = np.linspace(y_range[0], y_range[1], resolution)
     xx, yy = np.meshgrid(x_vals, y_vals)
 
-    # Vectorized evaluation over the whole grid via numpy.
-    try:
-        f = sp.lambdify((x, y), expr, modules=["numpy"])
-        zz = np.asarray(f(xx, yy), dtype=float)
-        if zz.shape != xx.shape:  # formula independent of x and/or y → scalar
-            zz = np.broadcast_to(zz, xx.shape).astype(float)
-    except Exception as e:
-        raise ValueError(f"Could not evaluate formula: {e}")
+    if complex_mode:
+        zz = _evaluate_complex(formula_str, xx, yy, projection)
+    else:
+        x, y = symbols('x y', real=True)
+        try:
+            # Bind x/y so the parsed expression uses OUR symbols (not fresh ones).
+            expr = sympify(formula_str, locals={"x": x, "y": y})
+        except Exception as e:
+            raise ValueError(f"Invalid formula: {e}")
+        try:
+            f = sp.lambdify((x, y), expr, modules=["numpy"])
+            zz = np.asarray(f(xx, yy), dtype=float)
+            if zz.shape != xx.shape:  # formula independent of x and/or y → scalar
+                zz = np.broadcast_to(zz, xx.shape).astype(float)
+        except Exception as e:
+            raise ValueError(f"Could not evaluate formula: {e}")
 
-    # Drop non-finite values (e.g. log of negatives) so they don't skew scaling.
+    # Drop non-finite values (e.g. poles, log of negatives) before scaling.
     zz = np.where(np.isfinite(zz), zz, np.nan)
+
+    if clip_percent:
+        lo = np.nanpercentile(zz, clip_percent)
+        hi = np.nanpercentile(zz, 100 - clip_percent)
+        zz = np.clip(zz, lo, hi)
+
+    if log_scale:
+        zz = np.log1p(zz - np.nanmin(zz))
 
     # Normalize to [0, 1]
     return normalize_to_01(zz)
+
+
+def _evaluate_complex(formula_str, xx, yy, projection="abs"):
+    """
+    Evaluate a complex function f(z) with z = x + i·y over the grid and return a
+    real field via ``projection`` ('abs' | 're' | 'im' | 'phase').
+    """
+    if mpmath is None:
+        raise ImportError("mpmath not installed (ships with sympy)")
+
+    z = symbols('z')
+    try:
+        expr = sympify(formula_str, locals={"z": z})
+    except Exception as e:
+        raise ValueError(f"Invalid complex formula: {e}")
+    try:
+        f = sp.lambdify(z, expr, modules=["mpmath"])
+    except Exception as e:
+        raise ValueError(f"Could not compile complex formula: {e}")
+
+    proj = {
+        "abs": lambda w: abs(w),
+        "re": lambda w: w.real,
+        "im": lambda w: w.imag,
+        "phase": lambda w: np.angle(w),
+    }.get(projection, lambda w: abs(w))
+
+    def _point(c):
+        try:
+            return float(proj(complex(f(complex(c)))))
+        except Exception:
+            return np.nan
+
+    grid = xx + 1j * yy
+    return np.vectorize(_point, otypes=[float])(grid)
+
+
+def mandelbrot_field(x_range=(-2.0, 0.6), y_range=(-1.3, 1.3),
+                     resolution=200, max_iter=120):
+    """
+    Mandelbrot escape-time field, normalized to [0, 1] — height = how quickly the
+    point z→z²+c diverges. A printable fractal that needs no closed-form formula.
+    """
+    x = np.linspace(x_range[0], x_range[1], resolution)
+    y = np.linspace(y_range[0], y_range[1], resolution)
+    C = x[None, :] + 1j * y[:, None]
+    Z = np.zeros_like(C)
+    out = np.full(C.shape, float(max_iter))
+    alive = np.ones(C.shape, dtype=bool)
+    for i in range(max_iter):
+        Z[alive] = Z[alive] ** 2 + C[alive]
+        escaped = alive & (np.abs(Z) > 2.0)
+        out[escaped] = i
+        alive &= ~escaped
+    return normalize_to_01(out)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Equation Gallery — curated famous equations, each reduced to a printable
+# heightfield z(x, y). Every entry carries the pretty equation (LaTeX), a
+# plain-language blurb, and sensible defaults so it renders well out of the box.
+# type: "real" (z=f(x,y)) | "complex" (height = projection of f(x+iy)) | "mandelbrot".
+# ─────────────────────────────────────────────────────────────────────────────
+EQUATION_GALLERY = [
+    {
+        "key": "riemann_zeta", "name": "Riemann zeta  |ζ(s)|", "type": "complex",
+        "formula": "zeta(z)", "projection": "abs",
+        "latex": r"\zeta(s)=\sum_{n=1}^{\infty}\frac{1}{n^{s}}",
+        "blurb": "The function at the heart of the Riemann Hypothesis. Plotted over "
+                 "the complex plane, its height dips to zero along the 'critical "
+                 "line' (Re = ½) — the famous non-trivial zeros that encode the "
+                 "distribution of the prime numbers.",
+        "x_range": (-3.0, 5.0), "y_range": (0.0, 35.0), "resolution": 130,
+        "height_mm": 25.0, "clip_percent": 1.0, "log_scale": True,
+    },
+    {
+        "key": "gamma", "name": "Gamma function  |Γ(z)|", "type": "complex",
+        "formula": "gamma(z)", "projection": "abs",
+        "latex": r"\Gamma(z)=\int_{0}^{\infty} t^{\,z-1}e^{-t}\,dt",
+        "blurb": "The factorial generalized to all numbers: Γ(n) = (n−1)!. Over the "
+                 "complex plane it rises into sharp poles at zero and the negative "
+                 "integers — a dramatic, spiky landscape.",
+        "x_range": (-4.0, 4.0), "y_range": (-3.0, 3.0), "resolution": 130,
+        "height_mm": 25.0, "clip_percent": 2.0, "log_scale": True,
+    },
+    {
+        "key": "particle_in_box", "name": "Schrödinger — particle in a box", "type": "real",
+        "formula": "sin(2*pi*x)*sin(3*pi*y)",
+        "latex": r"\hat{H}\psi = E\psi,\quad \psi_{nm}=\sin(n\pi x)\sin(m\pi y)",
+        "blurb": "A quantum particle trapped in a 2D box can only occupy discrete "
+                 "standing-wave states. This is the (n=2, m=3) state — the kind of "
+                 "solution Schrödinger's equation produces.",
+        "x_range": (0.0, 1.0), "y_range": (0.0, 1.0), "resolution": 120,
+        "height_mm": 18.0,
+    },
+    {
+        "key": "hydrogen_orbital", "name": "Hydrogen orbital (2p)", "type": "real",
+        "formula": "x*exp(-sqrt(x**2+y**2)/2)",
+        "latex": r"\psi_{2p}\;\propto\; r\,e^{-r/2}\cos\theta",
+        "blurb": "The dumbbell-shaped electron probability cloud of a hydrogen atom's "
+                 "2p orbital — one of the iconic images of quantum chemistry.",
+        "x_range": (-10.0, 10.0), "y_range": (-10.0, 10.0), "resolution": 120,
+        "height_mm": 20.0,
+    },
+    {
+        "key": "wave_packet", "name": "Quantum wave packet", "type": "real",
+        "formula": "exp(-(x**2+y**2)/4)*cos(3*x)",
+        "latex": r"\psi(x)=e^{-x^{2}/4}\,e^{ikx}",
+        "blurb": "A particle that is also a wave: a localized Gaussian envelope "
+                 "wrapped around an oscillation. The bridge between particle and "
+                 "wave pictures in quantum mechanics.",
+        "x_range": (-6.0, 6.0), "y_range": (-6.0, 6.0), "resolution": 120,
+        "height_mm": 20.0,
+    },
+    {
+        "key": "gravity_well", "name": "Gravity well (−GM/r)", "type": "real",
+        "formula": "-1/sqrt(x**2+y**2+0.05)",
+        "latex": r"\Phi(r)=-\frac{GM}{r}",
+        "blurb": "The classic 'bowling ball on a rubber sheet' picture: the deeper "
+                 "the well, the stronger gravity pulls. A planet's potential as a "
+                 "literal dip in space.",
+        "x_range": (-5.0, 5.0), "y_range": (-5.0, 5.0), "resolution": 120,
+        "height_mm": 22.0, "clip_percent": 1.0,
+    },
+    {
+        "key": "flamm_paraboloid", "name": "Black-hole geometry (Flamm)", "type": "real",
+        "formula": "2*sqrt(sqrt(x**2+y**2)-1)",
+        "latex": r"z(r)=2\sqrt{r_{s}}\,\sqrt{r-r_{s}}",
+        "blurb": "Flamm's paraboloid — the curved shape of space just outside a "
+                 "Schwarzschild black hole's event horizon. The funnel everyone "
+                 "pictures, drawn straight from General Relativity.",
+        "x_range": (-6.0, 6.0), "y_range": (-6.0, 6.0), "resolution": 140,
+        "height_mm": 22.0,
+    },
+    {
+        "key": "mandelbrot", "name": "Mandelbrot set", "type": "mandelbrot",
+        "formula": "z_{n+1} = z_n^2 + c",
+        "latex": r"z_{n+1}=z_{n}^{2}+c",
+        "blurb": "The most famous fractal. A dead-simple rule repeated forever "
+                 "produces infinite detail at its boundary — height here shows how "
+                 "fast each point escapes to infinity.",
+        "x_range": (-2.0, 0.6), "y_range": (-1.3, 1.3), "resolution": 220,
+        "height_mm": 15.0,
+    },
+    {
+        "key": "sinc_ripple", "name": "Diffraction ripple (sinc)", "type": "real",
+        "formula": "sin(sqrt(x**2+y**2+1e-9))/sqrt(x**2+y**2+1e-9)",
+        "latex": r"\mathrm{sinc}(r)=\frac{\sin r}{r}",
+        "blurb": "Concentric ripples like a stone dropped in water, or light "
+                 "diffracting through a circular aperture — the sinc function.",
+        "x_range": (-15.0, 15.0), "y_range": (-15.0, 15.0), "resolution": 140,
+        "height_mm": 18.0,
+    },
+    {
+        "key": "monkey_saddle", "name": "Monkey saddle", "type": "real",
+        "formula": "x**3 - 3*x*y**2",
+        "latex": r"z=x^{3}-3xy^{2}",
+        "blurb": "A saddle with three downward slopes instead of two — room for two "
+                 "legs and a tail. A favorite example from multivariable calculus.",
+        "x_range": (-2.0, 2.0), "y_range": (-2.0, 2.0), "resolution": 120,
+        "height_mm": 20.0,
+    },
+    {
+        "key": "soliton", "name": "Soliton (sech²)", "type": "real",
+        "formula": "1/cosh(sqrt(x**2+y**2))**2",
+        "latex": r"u(x,t)=\mathrm{sech}^{2}\!\left(\tfrac{x-ct}{2}\right)",
+        "blurb": "A solitary wave that holds its shape as it travels — solitons "
+                 "appear in shallow water, optical fibers, and the KdV equation.",
+        "x_range": (-6.0, 6.0), "y_range": (-6.0, 6.0), "resolution": 120,
+        "height_mm": 20.0,
+    },
+]
+
+
+def evaluate_gallery_item(item, resolution=None):
+    """Render one EQUATION_GALLERY entry to a normalized [0,1] height grid."""
+    res = int(resolution or item.get("resolution", 120))
+    if item["type"] == "mandelbrot":
+        return mandelbrot_field(item["x_range"], item["y_range"], res)
+    return evaluate_formula(
+        item["formula"], item["x_range"], item["y_range"], res,
+        complex_mode=(item["type"] == "complex"),
+        projection=item.get("projection", "abs"),
+        clip_percent=item.get("clip_percent"),
+        log_scale=item.get("log_scale", False),
+    )
 
 
 def solidify_surface(z_grid, base_height_mm=1.0):

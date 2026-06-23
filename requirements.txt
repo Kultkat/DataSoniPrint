@@ -8,6 +8,7 @@ trimesh>=4.0.0
 networkx>=3.0
 numpy-stl>=3.0.0
 sympy>=1.12
+mpmath>=1.3.0  # complex special functions (zeta, gamma) for the equation gallery
 pillow>=10.0.0
 pytesseract>=0.3.13  # OCR for engraving axis labels — needs the `tesseract-ocr` system binary (see packages.txt)
 h5py>=3.10.0
