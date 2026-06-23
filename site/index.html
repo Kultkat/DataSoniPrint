@@ -76,6 +76,13 @@
     .btn:hover { background: var(--accent); }
     .btn .arrow { font-weight: 400; }
 
+    .btn-row { display: flex; flex-wrap: wrap; gap: .8rem; justify-content: center; }
+    .btn.secondary {
+      background: transparent; color: var(--accent);
+      border: 2px solid var(--accent); box-shadow: none;
+    }
+    .btn.secondary:hover { background: rgba(110,168,254,.12); color: var(--accent); }
+
     main { padding-bottom: 4rem; }
     section { margin: 2.5rem 0; }
     h2 { font-size: clamp(1.4rem, 4vw, 1.9rem); margin: 0 0 1rem; }
@@ -116,10 +123,15 @@
       <h1>DataSoniPrint</h1>
       <p class="tagline">Turn scientific data into something you can <strong>feel</strong> and <strong>see</strong>.</p>
 
-      <!-- 🔗 LAUNCH BUTTON — replace href with your Streamlit URL -->
-      <a class="btn" href="https://datasoniprint.streamlit.app">
-        <span class="arrow">▶</span> Launch the app
-      </a>
+      <div class="btn-row">
+        <!-- 🔗 LAUNCH BUTTON — replace href with your Streamlit URL -->
+        <a class="btn" href="https://datasoniprint.streamlit.app">
+          <span class="arrow">▶</span> Launch the app
+        </a>
+        <a class="btn secondary" href="https://github.com/Kultkat/DataSoniPrint">
+          <span class="arrow" aria-hidden="true">⟨/⟩</span> View the code on GitHub
+        </a>
+      </div>
     </div>
   </header>
 
@@ -191,15 +203,73 @@
         </div>
       </section>
 
+      <section aria-labelledby="about">
+        <h2 id="about">About the project</h2>
+        <p>
+          The micro-innovation project <strong>“Tactile Data”</strong> develops a
+          compact, practice-oriented teaching format that gives students —
+          especially those with visual impairments — an alternative, haptic way
+          to access data-based content. At its core is a minimalist software tool
+          that automatically translates common data graphics into printable 3D
+          reliefs (STL files). These are produced as tactile mini-reliefs via 3D
+          printing and used directly in teaching.
+        </p>
+        <p>
+          The project is carried out jointly by Prof. Björn Penning and
+          Kaspar König, and is explicitly designed for rapid implementation and
+          high didactic impact.
+        </p>
+      </section>
+
+      <section aria-labelledby="team">
+        <h2 id="team">Team &amp; credits</h2>
+        <div class="cards">
+          <div class="card">
+            <div class="icon" aria-hidden="true">🔬</div>
+            <h3>Prof. Björn Penning</h3>
+            <p>Project lead, University of Zurich — research direction and physics.</p>
+          </div>
+          <div class="card">
+            <div class="icon" aria-hidden="true">🎨</div>
+            <h3>Dipl.-Des. Kaspar König</h3>
+            <p>Concept &amp; design — accessible, tactile data formats for teaching.</p>
+          </div>
+          <div class="card">
+            <div class="icon" aria-hidden="true">🤖</div>
+            <h3>Claude (Anthropic)</h3>
+            <p>AI pair-programmer and co-coder — the software was developed together
+               with the team using <a href="https://claude.com/claude-code">Claude Code</a>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section aria-labelledby="opensource">
+        <h2 id="opensource">Open source &amp; funding</h2>
+        <p>
+          DataSoniPrint is fully open source — the complete code is public for
+          review, reuse, and contribution:
+          <a href="https://github.com/Kultkat/DataSoniPrint">github.com/Kultkat/DataSoniPrint</a>.
+        </p>
+        <p>
+          The project was made possible by <strong>micro-funding from ULF</strong>
+          (Universitäre Lehrförderung — the University of Zurich teaching-innovation
+          fund): <a href="https://www.ulf.uzh.ch">ulf.uzh.ch</a>.
+        </p>
+      </section>
+
     </div>
   </main>
 
   <footer>
     <div class="wrap">
       <p>
-        DataSoniPrint is open source —
-        <a href="https://github.com/Kultkat/DataSoniPrint">source on GitHub</a>.
-        <!-- 🔗 replace with your Streamlit URL -->
+        DataSoniPrint — a “Tactile Data” micro-innovation project by
+        Prof. Björn Penning &amp; Dipl.-Des. Kaspar König,
+        funded by <a href="https://www.ulf.uzh.ch">ULF (University of Zurich)</a>.
+      </p>
+      <p>
+        Open source on <a href="https://github.com/Kultkat/DataSoniPrint">GitHub</a>
+        · built with <a href="https://claude.com/claude-code">Claude Code</a>
         · <a href="https://datasoniprint.streamlit.app">Open the app</a>
       </p>
     </div>
