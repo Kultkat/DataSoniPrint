@@ -514,11 +514,13 @@ if st.session_state.current_z_grid is not None:
     else:
         effective_grid = base_grid
 
-    # Image rows run top→bottom, but the mesh maps row 0 to the front (y=0),
-    # which mirrors the relief vertically vs. the source PNG. Flip it back so the
-    # print matches the picture. (Only for image mode — label_spec is set then.)
-    if spec is not None:
-        effective_grid = np.flipud(effective_grid)
+    # Image rows run top→bottom. The PHYSICAL plate maps row 0 to the front
+    # (y=0), mirroring the relief vertically vs. the source image, so the STL is
+    # flipped to make the print match the picture. The on-screen Plotly preview,
+    # however, is viewed from a camera that already mirrors that axis — so it
+    # must use the UN-flipped (image-orientation) grid to read the same way as
+    # the upload. (Image mode only — label_spec is set then.)
+    stl_grid = np.flipud(effective_grid) if spec is not None else effective_grid
 
     # ─────────────────────────────────────────────────────────────────────────
     # Live Preview (low-res)
@@ -527,7 +529,8 @@ if st.session_state.current_z_grid is not None:
     st.subheader("📱 Live 3D Preview (low resolution)")
 
     # Downsample for speed WITHOUT renormalizing, so engraved (negative) and
-    # braille (raised) features keep their true heights in the preview.
+    # braille (raised) features keep their true heights in the preview. Uses the
+    # image-orientation grid so the preview matches the uploaded picture.
     preview_grid = effective_grid[::4, ::4]
 
     # Create Plotly surface plot
@@ -570,7 +573,7 @@ if st.session_state.current_z_grid is not None:
         with st.spinner("Creating high-resolution mesh for 3D printing..."):
             try:
                 mesh, dims = scale_to_bed(
-                    effective_grid,
+                    stl_grid,
                     target_width_mm=width_mm,
                     target_depth_mm=depth_mm,
                     target_height_mm=height_mm
