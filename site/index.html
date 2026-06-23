@@ -76,13 +76,6 @@
     .btn:hover { background: var(--accent); }
     .btn .arrow { font-weight: 400; }
 
-    .btn-row { display: flex; flex-wrap: wrap; gap: .8rem; justify-content: center; }
-    .btn.secondary {
-      background: transparent; color: var(--accent);
-      border: 2px solid var(--accent); box-shadow: none;
-    }
-    .btn.secondary:hover { background: rgba(110,168,254,.12); color: var(--accent); }
-
     main { padding-bottom: 4rem; }
     section { margin: 2.5rem 0; }
     h2 { font-size: clamp(1.4rem, 4vw, 1.9rem); margin: 0 0 1rem; }
@@ -123,15 +116,10 @@
       <h1>DataSoniPrint</h1>
       <p class="tagline">Turn scientific data into something you can <strong>feel</strong> and <strong>see</strong>.</p>
 
-      <div class="btn-row">
-        <!-- 🔗 LAUNCH BUTTON — replace href with your Streamlit URL -->
-        <a class="btn" href="https://datasoniprint.streamlit.app">
-          <span class="arrow">▶</span> Launch the app
-        </a>
-        <a class="btn secondary" href="https://github.com/Kultkat/DataSoniPrint">
-          <span class="arrow" aria-hidden="true">⟨/⟩</span> View the code on GitHub
-        </a>
-      </div>
+      <!-- 🔗 LAUNCH BUTTON — replace href with your Streamlit URL -->
+      <a class="btn" href="https://datasoniprint.streamlit.app">
+        <span class="arrow">▶</span> Launch the app
+      </a>
     </div>
   </header>
 
@@ -173,11 +161,23 @@
       </section>
 
       <section aria-labelledby="who">
-        <h2 id="who">Who it helps</h2>
+        <h2 id="who">Inclusive teaching &amp; learning</h2>
         <p>
-          A blind or low-vision researcher can hold and feel the 3D print;
-          a sighted researcher can read the chart — everyone works from the same
-          underlying dataset.
+          Touch is a way of knowing. A 2-D plot can only <em>hint</em> at a third
+          dimension; a printed relief lets you grasp it directly — with your hands
+          and your eyes, instead of relying on imagination alone. DataSoniPrint
+          invites anyone to turn an abstract formula, dataset, or chart into
+          something tactile and touchable: a learning and epistemic tool for
+          understanding through <strong>form</strong>.
+        </p>
+        <p>
+          It is built for <strong>inclusive teaching</strong>. It opens data and
+          mathematics to students with visual impairments — and it helps everyone
+          else too. A teacher at <strong>any level and in any subject</strong>,
+          explaining a graph, a map, or a function, can turn it into a tactile
+          object that makes the idea click. A blind or low-vision learner can hold
+          and feel the print; a sighted learner can read the same chart — everyone
+          works from the same underlying data.
         </p>
       </section>
 
@@ -226,8 +226,9 @@
         <div class="cards">
           <div class="card">
             <div class="icon" aria-hidden="true">🔬</div>
-            <h3>Prof. Björn Penning</h3>
-            <p>Project lead, University of Zurich — research direction and physics.</p>
+            <h3>Prof. Dr. Björn Penning</h3>
+            <p>Project lead — Professor at the Physik-Institut (Physics Institute),
+               University of Zurich, where he heads the Dark Matter Group.</p>
           </div>
           <div class="card">
             <div class="icon" aria-hidden="true">🎨</div>
