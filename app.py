@@ -488,7 +488,10 @@ if st.session_state.current_z_grid is not None:
     with col2:
         depth_mm = st.slider("Depth (mm):", 10, 200, step=10, key="depth_mm")
     with col3:
-        height_mm = st.slider("Height scale (mm):", 0.5, 200.0, step=0.5, key="height_mm")
+        # Min 0.1mm / 0.1 step so thin B/W reliefs (down to 0.2mm) set from the
+        # image-mode height sliders stay within range — a value below this min
+        # raised StreamlitValueBelowMinError.
+        height_mm = st.slider("Height scale (mm):", 0.1, 200.0, step=0.1, key="height_mm")
 
     col1, col2 = st.columns(2)
     with col1:
