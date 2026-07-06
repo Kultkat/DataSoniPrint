@@ -89,15 +89,46 @@
     .card p { margin: 0; color: var(--muted); font-size: 1rem; }
     .card .icon { font-size: 1.8rem; } /* decorative */
 
-    /* Placeholder gallery — drop screenshots in later */
-    .gallery { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+    /* Examples carousel — shows 3 at a time (2 on tablet, 1 on phone),
+       arrows page through the rest. Drop image files in the same folder. */
+    .carousel { position: relative; }
+    .carousel-track {
+      display: flex; gap: 1rem;
+      overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth;
+      padding: 0 .25rem 1rem; -webkit-overflow-scrolling: touch;
+    }
+    @media (prefers-reduced-motion: reduce) { .carousel-track { scroll-behavior: auto; } }
+    .carousel-track::-webkit-scrollbar { height: 8px; }
+    .carousel-track::-webkit-scrollbar-thumb { background: rgba(128,140,180,.4); border-radius: 4px; }
+
     .shot {
-      background: var(--panel); border: 1px dashed rgba(128,140,180,.4);
-      border-radius: 1rem; min-height: 170px;
+      flex: 0 0 calc((100% - 2rem) / 3);   /* 3 per view (two 1rem gaps) */
+      scroll-snap-align: start;
+      position: relative; overflow: hidden;
+      background: var(--panel); border: 1px solid rgba(128,140,180,.18);
+      border-radius: 1rem; height: 220px;
       display: flex; align-items: center; justify-content: center;
       color: var(--muted); text-align: center; padding: 1rem;
     }
-    .shot img { width: 100%; height: auto; border-radius: .75rem; display: block; }
+    @media (max-width: 780px) { .shot { flex-basis: calc((100% - 1rem) / 2); } }
+    @media (max-width: 520px) { .shot { flex-basis: 100%; } }
+    .shot img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .shot .ph { display: none; }
+    .shot.noimg { border-style: dashed; }
+    .shot.noimg .ph { display: block; }
+    .shot .ph small { color: var(--muted); opacity: .7; }
+
+    .carousel-btn {
+      position: absolute; top: 50%; transform: translateY(-50%);
+      width: 2.7rem; height: 2.7rem; border-radius: 50%;
+      border: none; cursor: pointer;
+      background: var(--accent-strong); color: #fff; font-size: 1.4rem; line-height: 1;
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 4px 14px rgba(0,0,0,.3); z-index: 2;
+    }
+    .carousel-btn:hover { background: var(--accent); }
+    .carousel-btn.prev { left: -.7rem; }
+    .carousel-btn.next { right: -.7rem; }
 
     .steps { padding-left: 1.2rem; }
     .steps li { margin: .4rem 0; }
@@ -191,15 +222,50 @@
         </ol>
       </section>
 
-      <!-- 🖼️ GALLERY — add screenshots later: put images in this folder and
-           replace a placeholder block with: <div class="shot"><img src="preview1.png" alt="..."></div> -->
+      <!-- 🖼️ EXAMPLES CAROUSEL — put image files (gallery-1.jpg … gallery-6.jpg)
+           in the same folder as this page. To add more, copy a <figure class="shot">
+           block and bump the number; the arrows page through automatically. -->
       <section aria-labelledby="gallery">
         <h2 id="gallery">Examples</h2>
-        <p class="tagline" style="margin:0 0 1rem; text-align:left;">Screenshots of previews and printed results — coming soon.</p>
-        <div class="gallery">
-          <div class="shot">Screenshot placeholder<br>(3D preview)</div>
-          <div class="shot">Screenshot placeholder<br>(STL / printed relief)</div>
-          <div class="shot">Screenshot placeholder<br>(braille labels)</div>
+        <p class="tagline" style="margin:0 0 1rem; text-align:left;">Previews and printed results — use the arrows to see more.</p>
+        <div class="carousel">
+          <button class="carousel-btn prev" id="exPrev" type="button" aria-label="Show previous examples" aria-controls="exGallery">‹</button>
+          <div class="carousel-track" id="exGallery" tabindex="0" role="group" aria-label="Example images">
+            <!-- 📷 Replace src with your image filenames and write a real alt
+                 description for each (important — this is an accessibility tool).
+                 If a file is a PNG, change .jpg to .png in that slide's src. -->
+            <figure class="shot">
+              <img src="gallery-1.jpg" alt="Example 1 — describe this image" loading="lazy"
+                   onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <span class="ph">Photo 1<br><small>gallery-1.jpg</small></span>
+            </figure>
+            <figure class="shot">
+              <img src="gallery-2.jpg" alt="Example 2 — describe this image" loading="lazy"
+                   onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <span class="ph">Photo 2<br><small>gallery-2.jpg</small></span>
+            </figure>
+            <figure class="shot">
+              <img src="gallery-3.jpg" alt="Example 3 — describe this image" loading="lazy"
+                   onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <span class="ph">Photo 3<br><small>gallery-3.jpg</small></span>
+            </figure>
+            <figure class="shot">
+              <img src="gallery-4.jpg" alt="Example 4 — describe this image" loading="lazy"
+                   onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <span class="ph">Photo 4<br><small>gallery-4.jpg</small></span>
+            </figure>
+            <figure class="shot">
+              <img src="gallery-5.jpg" alt="Example 5 — describe this image" loading="lazy"
+                   onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <span class="ph">Photo 5<br><small>gallery-5.jpg</small></span>
+            </figure>
+            <figure class="shot">
+              <img src="gallery-6.jpg" alt="Example 6 — describe this image" loading="lazy"
+                   onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <span class="ph">Photo 6<br><small>gallery-6.jpg</small></span>
+            </figure>
+          </div>
+          <button class="carousel-btn next" id="exNext" type="button" aria-label="Show next examples" aria-controls="exGallery">›</button>
         </div>
       </section>
 
@@ -275,5 +341,17 @@
       </p>
     </div>
   </footer>
+
+  <script>
+    // Examples carousel: arrows page by one visible width (≈3 images on desktop,
+    // fewer on smaller screens). Native scroll-snap handles touch/drag.
+    (function () {
+      var track = document.getElementById('exGallery');
+      if (!track) return;
+      function page(dir) { track.scrollBy({ left: dir * track.clientWidth, behavior: 'smooth' }); }
+      document.getElementById('exPrev').addEventListener('click', function () { page(-1); });
+      document.getElementById('exNext').addEventListener('click', function () { page(1); });
+    })();
+  </script>
 </body>
 </html>
