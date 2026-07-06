@@ -113,6 +113,11 @@
     @media (max-width: 780px) { .shot { flex-basis: calc((100% - 1rem) / 2); } }
     @media (max-width: 520px) { .shot { flex-basis: 100%; } }
     .shot img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .shot figcaption {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      background: rgba(11,16,32,.72); color: #fff;
+      font-size: .9rem; line-height: 1.3; padding: .45rem .6rem; text-align: center;
+    }
     .shot .ph { display: none; }
     .shot.noimg { border-style: dashed; }
     .shot.noimg .ph { display: block; }
@@ -231,37 +236,48 @@
         <div class="carousel">
           <button class="carousel-btn prev" id="exPrev" type="button" aria-label="Show previous examples" aria-controls="exGallery">‹</button>
           <div class="carousel-track" id="exGallery" tabindex="0" role="group" aria-label="Example images">
-            <!-- 📷 Replace src with your image filenames and write a real alt
-                 description for each (important — this is an accessibility tool).
-                 If a file is a PNG, change .jpg to .png in that slide's src. -->
+            <!-- 📷 Image files (gallery-1.jpg … gallery-6.jpg) go in this same
+                 folder. Captions and alt text are set below. -->
             <figure class="shot">
-              <img src="gallery-1.jpg" alt="Example 1 — describe this image" loading="lazy"
+              <img src="gallery-1.jpg" loading="lazy"
+                   alt="3D-printed red relief of the function sin(x)·cos(y): a smooth egg-carton surface of rounded peaks and valleys, with the formula engraved along the front edge."
                    onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <figcaption>sin(x)·cos(y)</figcaption>
               <span class="ph">Photo 1<br><small>gallery-1.jpg</small></span>
             </figure>
             <figure class="shot">
-              <img src="gallery-2.jpg" alt="Example 2 — describe this image" loading="lazy"
+              <img src="gallery-2.jpg" loading="lazy"
+                   alt="3D-printed white relief of gravitational-wave strain data (LIGO Hanford H1, GWOSC O4a, 4 kHz): rows of sharp, jagged diagonal ridges."
                    onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <figcaption>Gravitational waves — H-H1_GWOSC_O4a_4KHZ</figcaption>
               <span class="ph">Photo 2<br><small>gallery-2.jpg</small></span>
             </figure>
             <figure class="shot">
-              <img src="gallery-3.jpg" alt="Example 3 — describe this image" loading="lazy"
+              <img src="gallery-3.jpg" loading="lazy"
+                   alt="3D-printed white square plate with a single central cone inside a shallow circular trough — a Ricker (Mexican-hat) wavelet — labelled ‘Ricker Wavelet’."
                    onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <figcaption>Ricker wavelet (Mexican hat)</figcaption>
               <span class="ph">Photo 3<br><small>gallery-3.jpg</small></span>
             </figure>
             <figure class="shot">
-              <img src="gallery-4.jpg" alt="Example 4 — describe this image" loading="lazy"
+              <img src="gallery-4.jpg" loading="lazy"
+                   alt="3D-printed red relief of sin(1/x)·cos(1/y): four quadrants whose ripples compress into a sharp point where they meet at the centre."
                    onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <figcaption>sin(1/x)·cos(1/y)</figcaption>
               <span class="ph">Photo 4<br><small>gallery-4.jpg</small></span>
             </figure>
             <figure class="shot">
-              <img src="gallery-5.jpg" alt="Example 5 — describe this image" loading="lazy"
+              <img src="gallery-5.jpg" loading="lazy"
+                   alt="3D-printed yellow relief generated from the ATLAS Higgs Challenge dataset: a long curved trough with a wavy crest along one edge."
                    onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <figcaption>ATLAS Higgs Challenge</figcaption>
               <span class="ph">Photo 5<br><small>gallery-5.jpg</small></span>
             </figure>
             <figure class="shot">
-              <img src="gallery-6.jpg" alt="Example 6 — describe this image" loading="lazy"
+              <img src="gallery-6.jpg" loading="lazy"
+                   alt="3D-printed cream-coloured relief of the Gamma function magnitude |Γ(z)|: a curved sheet with a row of sharp spikes marking the function’s poles."
                    onerror="this.closest('.shot').classList.add('noimg'); this.remove();">
+              <figcaption>Gamma function (Γ)</figcaption>
               <span class="ph">Photo 6<br><small>gallery-6.jpg</small></span>
             </figure>
           </div>
