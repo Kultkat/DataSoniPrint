@@ -9,7 +9,9 @@ import numpy as np
 import plotly.graph_objects as go
 from pathlib import Path
 import io
+import os
 import re
+import gc
 import tempfile
 
 from core_engine import (
@@ -70,14 +72,45 @@ st.sidebar.caption(
     "then freezes or reloads, it ran out of memory — try a smaller file."
 )
 
+with st.sidebar.expander("⚙️ Maintenance"):
+    if st.button("🧹 Clear project & free memory"):
+        # Drop the heavy objects and reclaim, without a full container restart.
+        for _k in ("columns", "headers", "current_z_grid", "stl_bytes",
+                   "stl_filename", "mesh_dims", "label_spec", "loaded_file"):
+            if _k in st.session_state:
+                st.session_state[_k] = None
+        try:
+            st.cache_data.clear()
+            st.cache_resource.clear()
+        except Exception:
+            pass
+        gc.collect()
+        st.rerun()
+    st.caption(
+        f"Clears loaded data & results and frees memory (now "
+        f"{memory_usage_mb():.0f} MB). Note: Python may not return all freed RAM "
+        "to the OS — for a guaranteed clean slate use Restart below."
+    )
+    if st.button("♻️ Restart app server"):
+        # os._exit ends the process; Streamlit Cloud's supervisor relaunches it
+        # with fresh RAM. You'll briefly see a "please wait"/reload screen.
+        gc.collect()
+        os._exit(0)
+    st.caption(
+        "Restarts the whole app with empty RAM (~30s downtime; everyone's "
+        "session reloads). This is the real \"reset RAM\"."
+    )
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Session State
 # ─────────────────────────────────────────────────────────────────────────────
 
 if "current_z_grid" not in st.session_state:
     st.session_state.current_z_grid = None
-if "current_mesh" not in st.session_state:
-    st.session_state.current_mesh = None
+if "stl_bytes" not in st.session_state:
+    st.session_state.stl_bytes = None      # exported STL, built once per generation
+if "stl_filename" not in st.session_state:
+    st.session_state.stl_filename = None
 if "mesh_dims" not in st.session_state:
     st.session_state.mesh_dims = None
 if "loaded_file" not in st.session_state:
@@ -269,6 +302,7 @@ if mode == "📊 From Data Column":
                     )
 
                     st.session_state.current_z_grid = z_grid
+                    st.session_state.stl_bytes = None  # invalidate any prior STL
                     st.session_state.label_spec = None
                     st.session_state.source_name = Path(
                         st.session_state.loaded_file or "data"
@@ -326,6 +360,7 @@ elif mode == "🔢 From Math Formula":
                            else resolution)
                     z_grid = evaluate_gallery_item(selected, resolution=res)
                     st.session_state.current_z_grid = z_grid
+                    st.session_state.stl_bytes = None  # invalidate any prior STL
                     st.session_state.label_spec = None
                     st.session_state.source_name = f"equation_{selected['key']}"
                     st.session_state.height_mm = float(selected.get("height_mm", 20.0))
@@ -425,6 +460,7 @@ matters — overall constants don't change the relief.
                         clip_percent=(1.0 if complex_mode else None),
                     )
                     st.session_state.current_z_grid = z_grid
+                    st.session_state.stl_bytes = None  # invalidate any prior STL
                     st.session_state.label_spec = None
                     # Name the STL after the formula itself (sanitized to a safe,
                     # unique filename stem) so each expression downloads distinctly.
@@ -569,6 +605,7 @@ elif mode == "🖼️ From Image":
                     # that reproduces the requested absolute mm for each style.
                     height_scale = bw_height if BINARY else relief_max
                     st.session_state.current_z_grid = grid
+                    st.session_state.stl_bytes = None  # invalidate any prior STL
                     st.session_state.height_mm = float(max(height_scale, 0.1))
                     st.session_state.source_name = Path(uploaded_file.name).stem
 
@@ -719,19 +756,32 @@ if st.session_state.current_z_grid is not None:
     if st.button("✨ Generate High-Res STL", key="gen_stl"):
         with st.spinner("Creating high-resolution mesh for 3D printing..."):
             try:
+                # Build the mesh, export STL bytes ONCE, then free the mesh. We
+                # store only the bytes — re-exporting the mesh on every rerun
+                # (e.g. each slider move) was serializing ~100MB repeatedly and
+                # could exhaust memory.
                 mesh, dims = scale_to_bed(
                     stl_grid,
                     target_width_mm=width_mm,
                     target_depth_mm=depth_mm,
                     target_height_mm=height_mm
                 )
-
-                st.session_state.current_mesh = mesh
+                st.session_state.stl_bytes = mesh_to_stl_bytes(mesh)
+                st.session_state.stl_filename = f"{st.session_state.source_name}_Soniprint.stl"
                 st.session_state.mesh_dims = dims
+                del mesh
+                gc.collect()
 
                 st.success("✓ STL generated successfully")
                 st.info(f"📦 Final dimensions: {dims[0]:.1f}×{dims[1]:.1f}×{dims[2]:.1f}mm (scale: {dims[3]:.2f})")
 
+            except MemoryError:
+                st.session_state.stl_bytes = None
+                gc.collect()
+                st.error(
+                    f"❌ Out of memory building the STL ({memory_usage_mb():.0f} MB "
+                    "in use). Lower the resolution/size and try again."
+                )
             except Exception as e:
                 st.error(f"❌ Error generating STL: {e}")
 
@@ -739,16 +789,14 @@ if st.session_state.current_z_grid is not None:
     # Download STL
     # ─────────────────────────────────────────────────────────────────────────
 
-    if st.session_state.current_mesh is not None:
+    if st.session_state.stl_bytes is not None:
         st.subheader("💾 Download Your Relief")
 
-        stl_bytes = mesh_to_stl_bytes(st.session_state.current_mesh)
-
-        stl_filename = f"{st.session_state.source_name}_Soniprint.stl"
+        stl_filename = st.session_state.stl_filename or "relief_Soniprint.stl"
 
         st.download_button(
             label="📥 Download STL (for 3D printer)",
-            data=stl_bytes,
+            data=st.session_state.stl_bytes,
             file_name=stl_filename,
             mime="application/octet-stream"
         )
