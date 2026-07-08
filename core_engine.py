@@ -56,6 +56,29 @@ except ImportError:
     trimesh = None
 
 
+def memory_usage_mb():
+    """
+    Current resident memory (RSS) of this process, in MB. Used to show the user
+    how close the app is to its RAM budget. Reads Linux /proc (Streamlit Cloud is
+    Linux); falls back to the peak from ``resource`` elsewhere. Returns 0.0 if
+    neither is available. NOTE: a hard out-of-memory kill (SIGKILL from the OS)
+    cannot be reported by the process itself — this only helps you watch the
+    trend and catch Python-level MemoryErrors.
+    """
+    try:
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0
+    except Exception:
+        pass
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.0
+    except Exception:
+        return 0.0
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 1: Data Ingestion & Normalization
 # ─────────────────────────────────────────────────────────────────────────────

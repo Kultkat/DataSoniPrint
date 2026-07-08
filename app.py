@@ -17,7 +17,7 @@ from core_engine import (
     evaluate_formula, generate_preview_mesh, scale_to_bed, mesh_to_stl_bytes,
     image_to_relief_array, spread_to_grid,
     detect_text_regions, build_image_relief, apply_labels,
-    EQUATION_GALLERY, evaluate_gallery_item,
+    EQUATION_GALLERY, evaluate_gallery_item, memory_usage_mb,
 )
 
 
@@ -46,6 +46,14 @@ st.markdown("""
 Convert any CSV, HDF5, NetCDF, GRIB, or ASDF file into a 3D-printable relief model.
 Upload data, configure scaling, and download STL for your 3D printer.
 """)
+
+# Live memory readout — lets you see how close the app is to its RAM budget.
+# (A hard out-of-memory kill can't print anything, so this trend is the warning.)
+st.sidebar.metric("🧠 Memory in use", f"{memory_usage_mb():.0f} MB")
+st.sidebar.caption(
+    "Hosted apps have a fixed RAM budget. If memory climbs steeply and the app "
+    "then freezes or reloads, it ran out of memory — try a smaller file."
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Session State
@@ -125,8 +133,25 @@ mode = st.radio(
 if mode == "📊 From Data Column":
     if uploaded_file is not None and uploaded_ext in DATA_EXTS:
         try:
-            file_bytes = uploaded_file.read()
-            headers, columns = load_file(file_bytes, uploaded_file.name)
+            size_mb = getattr(uploaded_file, "size", 0) / 1e6
+            mem_before = memory_usage_mb()
+            if size_mb > 100:
+                st.warning(
+                    f"⚠️ Large data file ({size_mb:.0f} MB). Loading it can use "
+                    "several times its size in RAM. If the app freezes or reloads "
+                    "right after this, it ran out of memory — see the memory gauge "
+                    "in the sidebar."
+                )
+            with st.spinner(f"Loading {uploaded_file.name} ({size_mb:.0f} MB)…"):
+                file_bytes = uploaded_file.read()
+                headers, columns = load_file(file_bytes, uploaded_file.name)
+                del file_bytes  # free the raw bytes once parsed
+
+            mem_after = memory_usage_mb()
+            st.caption(
+                f"🧠 Memory: {mem_after:.0f} MB in use "
+                f"(+{max(mem_after - mem_before, 0):.0f} MB to load this file)."
+            )
 
             st.session_state.loaded_file = uploaded_file.name
             st.session_state.headers = headers
@@ -154,6 +179,12 @@ if mode == "📊 From Data Column":
                             st.metric(f"**{header}**", f"{len(data)} points")
                             st.caption(f"Min: {data.min():.3g} | Max: {data.max():.3g} | Mean: {data.mean():.3g}")
 
+        except MemoryError:
+            st.error(
+                f"❌ Out of memory while loading this file "
+                f"({memory_usage_mb():.0f} MB in use). It's too big for the app's "
+                "RAM budget — try a smaller file, or downsample/trim it first."
+            )
         except Exception as e:
             st.error(f"❌ Error loading file: {e}")
     elif uploaded_file is not None and uploaded_ext in IMAGE_EXTS:
