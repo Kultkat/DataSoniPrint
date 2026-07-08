@@ -629,6 +629,21 @@ EQUATION_GALLERY = [
         "x_range": (-6.0, 6.0), "y_range": (-6.0, 6.0), "resolution": 120,
         "height_mm": 20.0,
     },
+    {
+        "key": "ricker_wavelet", "name": "Ricker wavelet (Mexican hat)", "type": "real",
+        # Time-domain Ricker ψ(t) = (1 − 2π²f²t²)·e^(−π²f²t²), rendered as a 2D
+        # relief by sweeping t → radius r = √(x²+y²) with dominant frequency
+        # f = 1 Hz. Height is normalized, so f only sets the scale (the domain
+        # below frames the main lobe + trough ring on a flat rim).
+        "formula": "(1 - 2*pi**2*(x**2 + y**2)) * exp(-pi**2*(x**2 + y**2))",
+        "latex": r"\psi(t)=\left(1-2\pi^{2}f^{2}t^{2}\right)e^{-\pi^{2}f^{2}t^{2}}",
+        "blurb": "The Ricker wavelet — the 'Mexican hat' pulse used as the source "
+                 "signature in seismic imaging and as the classic continuous "
+                 "wavelet. A sharp central peak ringed by a symmetric trough. Shown "
+                 "as a 2D relief: time t → radius, dominant frequency f = 1 Hz.",
+        "x_range": (-0.9, 0.9), "y_range": (-0.9, 0.9), "resolution": 140,
+        "height_mm": 18.0,
+    },
 ]
 
 
