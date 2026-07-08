@@ -41,12 +41,27 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+PROJECT_HOME = "https://www.physik.uzh.ch/~kaskoe/"
+SOURCE_URL = "https://github.com/Kultkat/DataSoniPrint"
+
 st.title("🎨 DataSoniPrint — 2D Data → 3D Relief STL")
 st.markdown("""
 Convert any CSV, HDF5, NetCDF, GRIB, or ASDF file into a 3D-printable relief model.
 Upload data, configure scaling, and download STL for your 3D printer.
 """)
+st.markdown(
+    f"ℹ️ **New here?** Visit the [project home & example gallery]({PROJECT_HOME}) "
+    f"for what this is about, printed examples, and the team — or read the "
+    f"[source & manual on GitHub]({SOURCE_URL})."
+)
 
+# ── Sidebar: project links + live memory readout ────────────────────────────
+st.sidebar.markdown("## DataSoniPrint")
+st.sidebar.markdown(
+    f"[🏠 Project home & examples]({PROJECT_HOME})\n\n"
+    f"[💻 Source & manual (GitHub)]({SOURCE_URL})"
+)
+st.sidebar.divider()
 # Live memory readout — lets you see how close the app is to its RAM budget.
 # (A hard out-of-memory kill can't print anything, so this trend is the warning.)
 st.sidebar.metric("🧠 Memory in use", f"{memory_usage_mb():.0f} MB")
@@ -752,7 +767,10 @@ if st.session_state.current_z_grid is not None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 st.markdown("---")
-st.markdown("""
-**About DataSoniPrint** — Convert any 2D dataset into a 3D-printable relief model.
-Built with Streamlit, Plotly, trimesh, and ❤️
-""")
+st.markdown(
+    f"**About DataSoniPrint** — Convert any 2D/3D dataset into a 3D-printable "
+    f"relief model. Built with Streamlit, Plotly, trimesh, and ❤️\n\n"
+    f"🏠 [Project home & examples]({PROJECT_HOME}) · "
+    f"💻 [Source & manual]({SOURCE_URL}) · "
+    f"A “Tactile Data” project — Penning & König, University of Zurich (CC BY 4.0)."
+)
