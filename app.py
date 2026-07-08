@@ -666,10 +666,14 @@ if st.session_state.current_z_grid is not None:
     z = preview_grid * height_mm + 1.0  # 1mm base
 
     fig = go.Figure(data=[go.Surface(x=x, y=y, z=z, colorscale="Viridis")])
-    # Lock the axes to true mm proportions so changing the Height slider is
-    # visibly reflected in the preview (otherwise Plotly auto-scales each axis
-    # independently and the relief always looks the same height).
-    max_extent = max(width_mm, depth_mm, height_mm)
+    # The footprint (x, y) is shown in true proportion; the height (z) is visually
+    # EXAGGERATED so thin reliefs (a few mm on a 100–200mm plate) don't collapse
+    # into a flat pancake. z-scale still tracks the Height slider (bigger height →
+    # taller preview), just floored so it's always legibly 3D. uirevision keeps
+    # your camera angle across slider tweaks instead of resetting it each rerun.
+    plate = max(width_mm, depth_mm, 1)
+    z_exag = 4.0
+    z_aspect = min(1.0, max(0.35, (height_mm / plate) * z_exag))
     fig.update_layout(
         title=f"3D Relief Preview — {width_mm}×{depth_mm}×{height_mm}mm",
         scene=dict(
@@ -677,19 +681,21 @@ if st.session_state.current_z_grid is not None:
             yaxis_title="Depth (mm)",
             zaxis_title="Height (mm)",
             aspectmode="manual",
-            aspectratio=dict(
-                x=width_mm / max_extent,
-                y=depth_mm / max_extent,
-                z=height_mm / max_extent,
-            ),
+            aspectratio=dict(x=width_mm / plate, y=depth_mm / plate, z=z_aspect),
             zaxis=dict(range=[0, height_mm + 1.0]),
-            camera=dict(eye=dict(x=-1.5, y=-1.5, z=1.2))
+            camera=dict(eye=dict(x=-1.5, y=-1.5, z=1.2)),
+            uirevision="relief",
         ),
         height=500,
-        margin=dict(l=0, r=0, b=0, t=40)
+        margin=dict(l=0, r=0, b=0, t=40),
+        uirevision="relief",
     )
 
     st.plotly_chart(fig, use_container_width=True)
+    st.caption(
+        "ℹ️ The preview's height is exaggerated for on-screen clarity — the "
+        "exported STL uses the true millimetres shown on the sliders."
+    )
 
     # ─────────────────────────────────────────────────────────────────────────
     # Generate High-Res STL
