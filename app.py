@@ -32,6 +32,58 @@ def _bed_from_domain(xspan, yspan):
         return 200, max(10, min(200, round(200 * yspan / xspan / 10) * 10))
     return max(10, min(200, round(200 * xspan / yspan / 10) * 10)), 200
 
+
+PREVIEW_MAX_SIDE = 500  # on-demand preview resolution cap (points per side)
+
+
+def _preview_downsample(grid, max_side=PREVIEW_MAX_SIDE):
+    """
+    Reduce a height grid for the 3D preview while PRESERVING sharp peaks/dips.
+    Plain striding (grid[::4]) skips over 1-pixel spikes — which is why the STL
+    showed detail the old preview missed. Here each block keeps its most extreme
+    value (largest magnitude, signed), so peaks and engraved dips survive.
+    """
+    h, w = grid.shape
+    step = int(np.ceil(max(h, w) / max_side))
+    if step <= 1:
+        return grid
+    H, W = (h // step) * step, (w // step) * step
+    g = grid[:H, :W].reshape(H // step, step, W // step, step)
+    gmax = g.max(axis=(1, 3))
+    gmin = g.min(axis=(1, 3))
+    return np.where(np.abs(gmax) >= np.abs(gmin), gmax, gmin)
+
+
+def build_preview_fig(grid, width_mm, depth_mm, height_mm):
+    """
+    Build the 3D preview figure at high resolution (peaks preserved). Footprint
+    (x, y) is true-proportioned; height (z) is exaggerated for on-screen clarity
+    (the STL always uses the true millimetres).
+    """
+    pv = _preview_downsample(grid)
+    h, w = pv.shape
+    x = np.linspace(0, width_mm, w)
+    y = np.linspace(0, depth_mm, h)
+    z = pv * height_mm + 1.0  # 1mm base
+    fig = go.Figure(data=[go.Surface(x=x, y=y, z=z, colorscale="Viridis")])
+    plate = max(width_mm, depth_mm, 1)
+    z_aspect = min(1.0, max(0.35, (height_mm / plate) * 4.0))
+    fig.update_layout(
+        title=f"3D Relief Preview — {width_mm}×{depth_mm}×{height_mm}mm ({w}×{h} pts)",
+        scene=dict(
+            xaxis_title="Width (mm)", yaxis_title="Depth (mm)", zaxis_title="Height (mm)",
+            aspectmode="manual",
+            aspectratio=dict(x=width_mm / plate, y=depth_mm / plate, z=z_aspect),
+            zaxis=dict(range=[min(0.0, float(z.min())), height_mm + 1.0]),
+            camera=dict(eye=dict(x=-1.5, y=-1.5, z=1.2)),
+            uirevision="relief",
+        ),
+        height=520,
+        margin=dict(l=0, r=0, b=0, t=40),
+        uirevision="relief",
+    )
+    return fig
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Streamlit Configuration
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,6 +161,8 @@ if "current_z_grid" not in st.session_state:
     st.session_state.current_z_grid = None
 if "stl_bytes" not in st.session_state:
     st.session_state.stl_bytes = None      # exported STL, built once per generation
+if "preview_fig" not in st.session_state:
+    st.session_state.preview_fig = None    # on-demand 3D preview figure
 if "stl_filename" not in st.session_state:
     st.session_state.stl_filename = None
 if "mesh_dims" not in st.session_state:
@@ -302,7 +356,8 @@ if mode == "📊 From Data Column":
                     )
 
                     st.session_state.current_z_grid = z_grid
-                    st.session_state.stl_bytes = None  # invalidate any prior STL
+                    st.session_state.stl_bytes = None    # invalidate prior STL
+                    st.session_state.preview_fig = None  # and prior preview
                     st.session_state.label_spec = None
                     st.session_state.source_name = Path(
                         st.session_state.loaded_file or "data"
@@ -360,7 +415,8 @@ elif mode == "🔢 From Math Formula":
                            else resolution)
                     z_grid = evaluate_gallery_item(selected, resolution=res)
                     st.session_state.current_z_grid = z_grid
-                    st.session_state.stl_bytes = None  # invalidate any prior STL
+                    st.session_state.stl_bytes = None    # invalidate prior STL
+                    st.session_state.preview_fig = None  # and prior preview
                     st.session_state.label_spec = None
                     st.session_state.source_name = f"equation_{selected['key']}"
                     st.session_state.height_mm = float(selected.get("height_mm", 20.0))
@@ -460,7 +516,8 @@ matters — overall constants don't change the relief.
                         clip_percent=(1.0 if complex_mode else None),
                     )
                     st.session_state.current_z_grid = z_grid
-                    st.session_state.stl_bytes = None  # invalidate any prior STL
+                    st.session_state.stl_bytes = None    # invalidate prior STL
+                    st.session_state.preview_fig = None  # and prior preview
                     st.session_state.label_spec = None
                     # Name the STL after the formula itself (sanitized to a safe,
                     # unique filename stem) so each expression downloads distinctly.
@@ -605,7 +662,8 @@ elif mode == "🖼️ From Image":
                     # that reproduces the requested absolute mm for each style.
                     height_scale = bw_height if BINARY else relief_max
                     st.session_state.current_z_grid = grid
-                    st.session_state.stl_bytes = None  # invalidate any prior STL
+                    st.session_state.stl_bytes = None    # invalidate prior STL
+                    st.session_state.preview_fig = None  # and prior preview
                     st.session_state.height_mm = float(max(height_scale, 0.1))
                     st.session_state.source_name = Path(uploaded_file.name).stem
 
@@ -701,59 +759,40 @@ if st.session_state.current_z_grid is not None:
     stl_grid = np.flipud(effective_grid) if spec is not None else effective_grid
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Live Preview (low-res)
+    # Generate — 3D preview & STL, on demand (not live). The preview is rendered
+    # at high resolution with peaks preserved, so it matches the STL's detail;
+    # it only re-renders when you press the button (after changing sliders).
     # ─────────────────────────────────────────────────────────────────────────
+    st.subheader("🧱 Generate")
+    _cprev, _cstl = st.columns(2)
+    with _cprev:
+        gen_preview = st.button("🔄 Generate 3D preview", key="gen_preview",
+                                use_container_width=True)
+    with _cstl:
+        gen_stl = st.button("✨ Generate High-Res STL", key="gen_stl",
+                            use_container_width=True)
 
-    st.subheader("📱 Live 3D Preview (low resolution)")
+    if gen_preview:
+        with st.spinner("Rendering high-resolution 3D preview…"):
+            st.session_state.preview_fig = build_preview_fig(
+                effective_grid, width_mm, depth_mm, height_mm
+            )
 
-    # Downsample for speed WITHOUT renormalizing, so engraved (negative) and
-    # braille (raised) features keep their true heights in the preview. Uses the
-    # image-orientation grid so the preview matches the uploaded picture.
-    preview_grid = effective_grid[::4, ::4]
-
-    # Create Plotly surface plot
-    h, w = preview_grid.shape
-    x = np.linspace(0, width_mm, w)
-    y = np.linspace(0, depth_mm, h)
-    z = preview_grid * height_mm + 1.0  # 1mm base
-
-    fig = go.Figure(data=[go.Surface(x=x, y=y, z=z, colorscale="Viridis")])
-    # The footprint (x, y) is shown in true proportion; the height (z) is visually
-    # EXAGGERATED so thin reliefs (a few mm on a 100–200mm plate) don't collapse
-    # into a flat pancake. z-scale still tracks the Height slider (bigger height →
-    # taller preview), just floored so it's always legibly 3D. uirevision keeps
-    # your camera angle across slider tweaks instead of resetting it each rerun.
-    plate = max(width_mm, depth_mm, 1)
-    z_exag = 4.0
-    z_aspect = min(1.0, max(0.35, (height_mm / plate) * z_exag))
-    fig.update_layout(
-        title=f"3D Relief Preview — {width_mm}×{depth_mm}×{height_mm}mm",
-        scene=dict(
-            xaxis_title="Width (mm)",
-            yaxis_title="Depth (mm)",
-            zaxis_title="Height (mm)",
-            aspectmode="manual",
-            aspectratio=dict(x=width_mm / plate, y=depth_mm / plate, z=z_aspect),
-            zaxis=dict(range=[0, height_mm + 1.0]),
-            camera=dict(eye=dict(x=-1.5, y=-1.5, z=1.2)),
-            uirevision="relief",
-        ),
-        height=500,
-        margin=dict(l=0, r=0, b=0, t=40),
-        uirevision="relief",
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption(
-        "ℹ️ The preview's height is exaggerated for on-screen clarity — the "
-        "exported STL uses the true millimetres shown on the sliders."
-    )
+    if st.session_state.preview_fig is not None:
+        st.plotly_chart(st.session_state.preview_fig, use_container_width=True)
+        st.caption(
+            "ℹ️ On-demand preview — high resolution with peaks preserved. Press "
+            "**Generate 3D preview** again after changing sliders. Height is "
+            "exaggerated for clarity; the STL uses the true millimetres shown."
+        )
+    else:
+        st.info("Press **🔄 Generate 3D preview** to render the relief in 3D.")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Generate High-Res STL
     # ─────────────────────────────────────────────────────────────────────────
 
-    if st.button("✨ Generate High-Res STL", key="gen_stl"):
+    if gen_stl:
         with st.spinner("Creating high-resolution mesh for 3D printing..."):
             try:
                 # Build the mesh, export STL bytes ONCE, then free the mesh. We
