@@ -1,8 +1,8 @@
 [server]
 # Hard cap on uploads (MB). This is a guard rail, NOT the real memory fix —
-# the actual OOM driver is image *resolution*, which is capped in code by
-# MAX_RELIEF_DIM in core_engine.py. A small file can still be a huge image,
-# so both limits matter. 25 MB comfortably covers data files (CSV/HDF5) and
-# high-res source images while blocking pathological uploads.
-maxUploadSize = 25
-maxMessageSize = 50
+# the actual OOM driver for images is *resolution*, which is capped in code by
+# MAX_RELIEF_DIM in core_engine.py, so a large image file is safe. 250 MB is
+# needed for big scientific data files (HDF5/NetCDF/GRIB, e.g. GW datasets).
+# maxMessageSize must be >= maxUploadSize or large uploads fail on the socket.
+maxUploadSize = 250
+maxMessageSize = 300
