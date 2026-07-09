@@ -864,13 +864,15 @@ def detect_text_regions(image_path, min_confidence=40, psm=11, whitelist=None):
       - **Scattered, isolated labels** (not flowing paragraphs). Page-seg mode
         ``11`` ("sparse text — find as much text as possible in no particular
         order") reads these far better than the default layout analysis.
-      - **Small glyphs.** OCR runs on a higher-resolution copy (see
-        ``OCR_MIN_DIM``/``OCR_MAX_DIM``); tiny pin labels miss entirely at the
-        800 px relief size. Boxes are scaled back to the relief grid on return.
-      - **Ambiguous short codes.** Pass a ``whitelist`` (e.g. capitals + digits)
-        to constrain recognition to that alphabet — this makes Tesseract commit
-        to codes like ``Y22``/``YG1`` instead of rejecting them, sharply raising
-        recall. Leave it ``None`` for general text.
+      - **Small glyphs.** OCR runs at multiple scales — the relief size *and* an
+        upscaled copy (see ``OCR_MIN_DIM``/``OCR_MAX_DIM``) — because tiny pin
+        labels miss entirely at 800 px. Every box is scaled back to the relief
+        grid, and the scales are merged (so this never does worse than the base).
+      - **Ambiguous short codes.** ``whitelist`` (e.g. capitals + digits) is used
+        as a *post-filter* on the recognized text, NOT a Tesseract config — the
+        engine-level ``tessedit_char_whitelist`` silently returns nothing under
+        the default LSTM model, so it must never be passed. Leave it ``None`` for
+        general text.
 
     Abbreviations (``YUS``, ``YXX``, ``YG1`` …) need no special handling: they
     are just short alphanumeric tokens, kept as long as they clear
@@ -893,57 +895,62 @@ def detect_text_regions(image_path, min_confidence=40, psm=11, whitelist=None):
     relief_img = _load_grayscale(image_path)
     rw, rh = relief_img.size
 
-    # OCR on a higher-resolution copy; upscale small sources so short labels are
-    # legible, then map the resulting boxes back to the relief grid.
-    ocr_img = _load_grayscale(image_path, max_dim=OCR_MAX_DIM)
-    if max(ocr_img.size) < OCR_MIN_DIM:
-        f = OCR_MIN_DIM / max(ocr_img.size)
-        ocr_img = ocr_img.resize(
-            (max(1, round(ocr_img.width * f)), max(1, round(ocr_img.height * f))),
+    # OCR at two scales: the relief size (baseline — matches the data relief) and
+    # an upscaled copy so small labels become legible. Merging both can only add
+    # detections, never remove the ones the baseline already finds.
+    ocr_imgs = [relief_img]
+    hi = _load_grayscale(image_path, max_dim=OCR_MAX_DIM)
+    if max(hi.size) < OCR_MIN_DIM:
+        f = OCR_MIN_DIM / max(hi.size)
+        hi = hi.resize(
+            (max(1, round(hi.width * f)), max(1, round(hi.height * f))),
             Image.LANCZOS,
         )
-    ow, oh = ocr_img.size
-    sx, sy = rw / ow, rh / oh  # OCR pixels → relief pixels
+    if hi.size != relief_img.size:
+        ocr_imgs.append(hi)
 
-    arr = np.array(ocr_img, dtype=np.uint8)
-    # Pass 1: as-is (dark text on light — plot axes, black map labels).
-    # Pass 2: inverted (light text on dark — white labels on coloured pins).
-    variants = (arr, 255 - arr)
+    allowed = set(whitelist.upper()) if whitelist else None
     config = f"--psm {int(psm)}"
-    if whitelist:
-        config += f" -c tessedit_char_whitelist={whitelist}"
 
     collected = []
-    for variant in variants:
-        try:
-            data = pytesseract.image_to_data(
-                Image.fromarray(variant),
-                output_type=pytesseract.Output.DICT,
-                config=config,
-            )
-        except Exception as e:  # TesseractNotFoundError and friends
-            raise RuntimeError(
-                "Tesseract OCR engine not found. Install it with "
-                "`sudo apt-get install tesseract-ocr` (Linux) or "
-                "`brew install tesseract` (macOS)."
-            ) from e
-        for i in range(len(data["text"])):
-            txt = (data["text"][i] or "").strip()
-            if not txt or not any(c.isalnum() for c in txt):
-                continue
+    for img in ocr_imgs:
+        iw, ih = img.size
+        sx, sy = rw / iw, rh / ih  # this scale's pixels → relief pixels
+        arr = np.array(img, dtype=np.uint8)
+        # Pass 1: as-is (dark text on light — plot axes, black map labels).
+        # Pass 2: inverted (light text on dark — white labels on coloured pins).
+        for variant in (arr, 255 - arr):
             try:
-                conf = float(data["conf"][i])
-            except (ValueError, TypeError):
-                conf = -1.0
-            if conf < min_confidence:
-                continue
-            collected.append((
-                int(round(data["left"][i] * sx)), int(round(data["top"][i] * sy)),
-                int(round(data["width"][i] * sx)), int(round(data["height"][i] * sy)),
-                txt, conf,
-            ))
+                data = pytesseract.image_to_data(
+                    Image.fromarray(variant),
+                    output_type=pytesseract.Output.DICT,
+                    config=config,
+                )
+            except Exception as e:  # TesseractNotFoundError and friends
+                raise RuntimeError(
+                    "Tesseract OCR engine not found. Install it with "
+                    "`sudo apt-get install tesseract-ocr` (Linux) or "
+                    "`brew install tesseract` (macOS)."
+                ) from e
+            for i in range(len(data["text"])):
+                txt = (data["text"][i] or "").strip()
+                if not txt or not any(c.isalnum() for c in txt):
+                    continue
+                if allowed is not None and not set(txt.upper()) <= allowed:
+                    continue
+                try:
+                    conf = float(data["conf"][i])
+                except (ValueError, TypeError):
+                    conf = -1.0
+                if conf < min_confidence:
+                    continue
+                collected.append((
+                    int(round(data["left"][i] * sx)), int(round(data["top"][i] * sy)),
+                    int(round(data["width"][i] * sx)), int(round(data["height"][i] * sy)),
+                    txt, conf,
+                ))
 
-    # Merge the two passes and drop the confidence field to keep the public
+    # Merge all scales/passes and drop the confidence field to keep the public
     # (x, y, w, h, text) contract.
     return [(b[0], b[1], b[2], b[3], b[4]) for b in _dedupe_boxes(collected)]
 
