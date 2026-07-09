@@ -234,61 +234,78 @@ mode = st.radio(
 
 if mode == "📊 From Data Column":
     if uploaded_file is not None and uploaded_ext in DATA_EXTS:
-        try:
-            size_mb = getattr(uploaded_file, "size", 0) / 1e6
-            mem_before = memory_usage_mb()
-            if size_mb > 100:
-                st.warning(
-                    f"⚠️ Large data file ({size_mb:.0f} MB). Loading it can use "
-                    "several times its size in RAM. If the app freezes or reloads "
-                    "right after this, it ran out of memory — see the memory gauge "
-                    "in the sidebar."
+        # Parse the file only ONCE per upload. Streamlit reruns the whole script
+        # on every widget change — including the Phase-4 size/height sliders — so
+        # without this guard a large HDF5 was re-read and re-parsed into numpy
+        # columns on every slider tick, spiking RAM until the app was OOM-killed
+        # (health check EOF). Once loaded we keep the columns in session_state
+        # and skip the read on subsequent reruns; sliders then stay cheap.
+        already_loaded = (
+            st.session_state.get("loaded_file") == uploaded_file.name
+            and st.session_state.headers is not None
+        )
+        if already_loaded:
+            st.success(
+                f"✓ {uploaded_file.name} loaded — {len(st.session_state.headers)} "
+                f"columns ({memory_usage_mb():.0f} MB in use). Adjust the sliders "
+                "freely; the file isn't re-read."
+            )
+        else:
+            try:
+                size_mb = getattr(uploaded_file, "size", 0) / 1e6
+                mem_before = memory_usage_mb()
+                if size_mb > 100:
+                    st.warning(
+                        f"⚠️ Large data file ({size_mb:.0f} MB). Loading it can use "
+                        "several times its size in RAM. If the app freezes or reloads "
+                        "right after this, it ran out of memory — see the memory gauge "
+                        "in the sidebar."
+                    )
+                with st.spinner(f"Loading {uploaded_file.name} ({size_mb:.0f} MB)…"):
+                    file_bytes = uploaded_file.read()
+                    headers, columns = load_file(file_bytes, uploaded_file.name)
+                    del file_bytes  # free the raw bytes once parsed
+
+                mem_after = memory_usage_mb()
+                st.caption(
+                    f"🧠 Memory: {mem_after:.0f} MB in use "
+                    f"(+{max(mem_after - mem_before, 0):.0f} MB to load this file)."
                 )
-            with st.spinner(f"Loading {uploaded_file.name} ({size_mb:.0f} MB)…"):
-                file_bytes = uploaded_file.read()
-                headers, columns = load_file(file_bytes, uploaded_file.name)
-                del file_bytes  # free the raw bytes once parsed
 
-            mem_after = memory_usage_mb()
-            st.caption(
-                f"🧠 Memory: {mem_after:.0f} MB in use "
-                f"(+{max(mem_after - mem_before, 0):.0f} MB to load this file)."
-            )
+                st.session_state.loaded_file = uploaded_file.name
+                st.session_state.headers = headers
+                st.session_state.columns = columns
 
-            st.session_state.loaded_file = uploaded_file.name
-            st.session_state.headers = headers
-            st.session_state.columns = columns
+                col_lengths = [len(columns[h]) for h in headers]
+                len_min, len_max = min(col_lengths), max(col_lengths)
+                if len_min == len_max:
+                    len_summary = f"{len_min:,} rows"
+                else:
+                    len_summary = f"{len_min:,}–{len_max:,} rows (columns differ in length)"
+                st.success(f"✓ Loaded {uploaded_file.name} — {len(headers)} columns, {len_summary}")
 
-            col_lengths = [len(columns[h]) for h in headers]
-            len_min, len_max = min(col_lengths), max(col_lengths)
-            if len_min == len_max:
-                len_summary = f"{len_min:,} rows"
-            else:
-                len_summary = f"{len_min:,}–{len_max:,} rows (columns differ in length)"
-            st.success(f"✓ Loaded {uploaded_file.name} — {len(headers)} columns, {len_summary}")
+                # Show column stats
+                with st.expander("📈 Column Statistics"):
+                    col1, col2 = st.columns(2)
+                    for idx, header in enumerate(headers):
+                        data = columns[header]
+                        if idx % 2 == 0:
+                            with col1:
+                                st.metric(f"**{header}**", f"{len(data)} points")
+                                st.caption(f"Min: {data.min():.3g} | Max: {data.max():.3g} | Mean: {data.mean():.3g}")
+                        else:
+                            with col2:
+                                st.metric(f"**{header}**", f"{len(data)} points")
+                                st.caption(f"Min: {data.min():.3g} | Max: {data.max():.3g} | Mean: {data.mean():.3g}")
 
-            # Show column stats
-            with st.expander("📈 Column Statistics"):
-                col1, col2 = st.columns(2)
-                for idx, header in enumerate(headers):
-                    data = columns[header]
-                    if idx % 2 == 0:
-                        with col1:
-                            st.metric(f"**{header}**", f"{len(data)} points")
-                            st.caption(f"Min: {data.min():.3g} | Max: {data.max():.3g} | Mean: {data.mean():.3g}")
-                    else:
-                        with col2:
-                            st.metric(f"**{header}**", f"{len(data)} points")
-                            st.caption(f"Min: {data.min():.3g} | Max: {data.max():.3g} | Mean: {data.mean():.3g}")
-
-        except MemoryError:
-            st.error(
-                f"❌ Out of memory while loading this file "
-                f"({memory_usage_mb():.0f} MB in use). It's too big for the app's "
-                "RAM budget — try a smaller file, or downsample/trim it first."
-            )
-        except Exception as e:
-            st.error(f"❌ Error loading file: {e}")
+            except MemoryError:
+                st.error(
+                    f"❌ Out of memory while loading this file "
+                    f"({memory_usage_mb():.0f} MB in use). It's too big for the app's "
+                    "RAM budget — try a smaller file, or downsample/trim it first."
+                )
+            except Exception as e:
+                st.error(f"❌ Error loading file: {e}")
     elif uploaded_file is not None and uploaded_ext in IMAGE_EXTS:
         st.warning("That's an image — switch to '🖼️ From Image' mode above (Step 2).")
 
