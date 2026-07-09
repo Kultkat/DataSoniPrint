@@ -812,10 +812,53 @@ def image_to_relief_array(image_path, invert=True, bg_threshold=0.1):
     return normalize_to_01(v)
 
 
-def detect_text_regions(image_path, min_confidence=40):
+def _boxes_iou(a, b):
+    """Intersection-over-union of two (x, y, w, h, ...) boxes."""
+    ax, ay, aw, ah = a[0], a[1], a[2], a[3]
+    bx, by, bw, bh = b[0], b[1], b[2], b[3]
+    ix = max(0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0, min(ay + ah, by + bh) - max(ay, by))
+    inter = ix * iy
+    if inter <= 0:
+        return 0.0
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _dedupe_boxes(boxes, iou_thresh=0.4):
+    """
+    Collapse near-duplicate OCR reads (the same label found by more than one
+    pass). ``boxes`` are ``(x, y, w, h, text, conf)``; the higher-confidence
+    (then longer-text) read of each overlapping cluster is kept.
+    """
+    ordered = sorted(boxes, key=lambda b: (b[5], len(b[4])), reverse=True)
+    kept = []
+    for b in ordered:
+        if any(_boxes_iou(b, k) >= iou_thresh for k in kept):
+            continue
+        kept.append(b)
+    return kept
+
+
+def detect_text_regions(image_path, min_confidence=40, psm=11):
     """
     OCR the image and return word bounding boxes as
     ``[(x, y, w, h, text), ...]`` in image-pixel coordinates.
+
+    Two things make short labels on maps/plots hard for Tesseract, and both are
+    handled here:
+
+      - **Light text on a dark fill** (e.g. white building codes on coloured map
+        pins). Tesseract assumes dark-on-light, so we OCR the image *and* its
+        inverted copy and merge the results — the inverted pass is what recovers
+        white-on-blue labels. De-duplication drops any label found by both.
+      - **Scattered, isolated labels** (not flowing paragraphs). Page-seg mode
+        ``11`` ("sparse text — find as much text as possible in no particular
+        order") reads these far better than the default layout analysis.
+
+    Abbreviations (``YUS``, ``YXX``, ``YG1`` …) need no special handling: they
+    are just short alphanumeric tokens, kept as long as they clear
+    ``min_confidence`` and contain a letter or digit.
 
     Requires the Tesseract engine + the ``pytesseract`` binding. Raises a clear,
     actionable error if either is missing so the caller can fall back gracefully.
@@ -829,31 +872,45 @@ def detect_text_regions(image_path, min_confidence=40):
     if Image is None:
         raise ImportError("Pillow not installed")
 
-    img = _load_grayscale(image_path)
-    try:
-        data = pytesseract.image_to_data(
-            img, output_type=pytesseract.Output.DICT
-        )
-    except Exception as e:  # TesseractNotFoundError and friends
-        raise RuntimeError(
-            "Tesseract OCR engine not found. Install it with "
-            "`sudo apt-get install tesseract-ocr` (Linux) or "
-            "`brew install tesseract` (macOS)."
-        ) from e
+    base = _load_grayscale(image_path)
+    arr = np.array(base, dtype=np.uint8)
+    # Pass 1: as-is (dark text on light — plot axes, black map labels).
+    # Pass 2: inverted (light text on dark — white labels on coloured pins).
+    variants = (arr, 255 - arr)
+    config = f"--psm {int(psm)}"
 
-    boxes = []
-    for i in range(len(data["text"])):
-        txt = (data["text"][i] or "").strip()
+    collected = []
+    for variant in variants:
         try:
-            conf = float(data["conf"][i])
-        except (ValueError, TypeError):
-            conf = -1.0
-        if txt and conf >= min_confidence:
-            boxes.append((
+            data = pytesseract.image_to_data(
+                Image.fromarray(variant),
+                output_type=pytesseract.Output.DICT,
+                config=config,
+            )
+        except Exception as e:  # TesseractNotFoundError and friends
+            raise RuntimeError(
+                "Tesseract OCR engine not found. Install it with "
+                "`sudo apt-get install tesseract-ocr` (Linux) or "
+                "`brew install tesseract` (macOS)."
+            ) from e
+        for i in range(len(data["text"])):
+            txt = (data["text"][i] or "").strip()
+            if not txt or not any(c.isalnum() for c in txt):
+                continue
+            try:
+                conf = float(data["conf"][i])
+            except (ValueError, TypeError):
+                conf = -1.0
+            if conf < min_confidence:
+                continue
+            collected.append((
                 int(data["left"][i]), int(data["top"][i]),
-                int(data["width"][i]), int(data["height"][i]), txt,
+                int(data["width"][i]), int(data["height"][i]), txt, conf,
             ))
-    return boxes
+
+    # Merge the two passes and drop the confidence field to keep the public
+    # (x, y, w, h, text) contract.
+    return [(b[0], b[1], b[2], b[3], b[4]) for b in _dedupe_boxes(collected)]
 
 
 def build_image_relief(image_path, invert=True, bg_threshold=0.1,
@@ -956,18 +1013,45 @@ def text_to_braille_cells(text):
     Translate a string into a list of Grade-1 (uncontracted) braille cells.
 
     Each cell is a tuple of raised dot numbers (1–6); ``()`` is a blank space.
-    Digits are preceded by the number sign, capitals by the capital sign.
+    Digits are preceded by the number sign. Capitalization follows the standard
+    indicators: a single capital sign before one capital letter, and a doubled
+    capital sign (the "capital word" indicator) before a run of two or more —
+    so all-caps abbreviations like ``YUS`` render compactly as ⠠⠠⠽⠥⠎ rather
+    than repeating the sign before every letter.
     """
     cells = []
     in_number = False
-    for ch in text:
+    caps_word = False  # a capital-word indicator is currently in effect
+    n = len(text)
+    for i, ch in enumerate(text):
         if ch == " ":
             cells.append(())
             in_number = False
+            caps_word = False
             continue
-        if ch.isupper():
-            cells.append(_BRAILLE_CAPITAL_SIGN)
-            ch = ch.lower()
+        if ch.isalpha():
+            if ch.isupper():
+                if not caps_word:
+                    # Look ahead: 2+ consecutive capitals → capital-word sign.
+                    run = 0
+                    j = i
+                    while j < n and text[j].isalpha() and text[j].isupper():
+                        run += 1
+                        j += 1
+                    if run >= 2:
+                        cells.append(_BRAILLE_CAPITAL_SIGN)
+                        cells.append(_BRAILLE_CAPITAL_SIGN)
+                        caps_word = True
+                    else:
+                        cells.append(_BRAILLE_CAPITAL_SIGN)
+                low = ch.lower()
+            else:
+                caps_word = False
+                low = ch
+            in_number = False
+            if low in _BRAILLE_LETTERS:
+                cells.append(_BRAILLE_LETTERS[low])
+            continue
         if ch.isdigit():
             if not in_number:
                 cells.append(_BRAILLE_NUMBER_SIGN)
@@ -975,9 +1059,8 @@ def text_to_braille_cells(text):
             cells.append(_BRAILLE_LETTERS[_BRAILLE_DIGITS[ch]])
             continue
         in_number = False
-        if ch in _BRAILLE_LETTERS:
-            cells.append(_BRAILLE_LETTERS[ch])
-        elif ch in _BRAILLE_PUNCT:
+        caps_word = False
+        if ch in _BRAILLE_PUNCT:
             cells.append(_BRAILLE_PUNCT[ch])
         # unknown characters are silently skipped
     return cells
@@ -1003,7 +1086,8 @@ def apply_labels(grid, glyph_mask, text_boxes, mode,
                  width_mm, depth_mm, height_mm,
                  engrave_depth_mm=0.3, base_mm=1.0,
                  dot_height_mm=0.6, dot_dia_mm=1.5,
-                 dot_pitch_mm=2.5, cell_pitch_mm=6.0):
+                 dot_pitch_mm=2.5, cell_pitch_mm=6.0,
+                 fit_to_box=False, min_dot_dia_mm=0.4):
     """
     Apply axis labels onto a copy of the data relief ``grid`` and return it.
 
@@ -1019,6 +1103,12 @@ def apply_labels(grid, glyph_mask, text_boxes, mode,
     Braille geometry is in absolute millimetres, converted to grid pixels via the
     physical ``width_mm``/``depth_mm`` and the grid resolution — so dots stay the
     correct tactile size regardless of image resolution.
+
+    With ``fit_to_box=True`` each label's braille cluster is scaled down (keeping
+    the standard 1.5 : 2.5 : 6.0 dot/pitch/cell proportions) to span the original
+    text box, so it occupies the same footprint as the printed label — useful for
+    dense maps where full-size cells would overlap. Dots never grow beyond the
+    standard size and never shrink below ``min_dot_dia_mm`` (kept printable).
     """
     out = grid.copy()
     height_mm = max(height_mm, 0.1)
@@ -1033,28 +1123,46 @@ def apply_labels(grid, glyph_mask, text_boxes, mode,
         h, w = out.shape
         mmx = width_mm / max(w, 1)   # mm per pixel (x)
         mmy = depth_mm / max(h, 1)   # mm per pixel (y)
-        rx = (dot_dia_mm / 2.0) / mmx
-        ry = (dot_dia_mm / 2.0) / mmy
         value = dot_height_mm / height_mm
         # dot number → (column, row) within the cell
         dot_pos = {1: (0, 0), 2: (0, 1), 3: (0, 2),
                    4: (1, 0), 5: (1, 1), 6: (1, 2)}
+        # Standard proportions, reused when fitting so the cluster stays braille-
+        # shaped as it scales: cluster width = (n-1)·cell + dot_pitch + dot_dia.
+        r_dp = dot_pitch_mm / cell_pitch_mm
+        r_dd = dot_dia_mm / cell_pitch_mm
         for box in (text_boxes or []):
             x, y, bw, bh = box[0], box[1], box[2], box[3]
             text = box[4] if len(box) > 4 else ""
             cells = text_to_braille_cells(text)
             if not cells:
                 continue
-            # Anchor: start at the box's left, vertically centred on the box.
-            start_x_mm = x * mmx
-            mid_y_mm = (y + bh / 2.0) * mmy
-            top_y_mm = mid_y_mm - dot_pitch_mm  # 3-row cell centred on the box
+            n = len(cells)
+
+            cell_pitch, dot_pitch, dot_dia = cell_pitch_mm, dot_pitch_mm, dot_dia_mm
+            if fit_to_box:
+                box_w_mm = max(bw * mmx, 1e-6)
+                denom = (n - 1) + r_dp + r_dd
+                cp = box_w_mm / denom if denom > 0 else cell_pitch_mm
+                cell_pitch = min(cp, cell_pitch_mm)   # never larger than standard
+                dot_pitch = cell_pitch * r_dp
+                dot_dia = max(cell_pitch * r_dd, min_dot_dia_mm)
+
+            rx = (dot_dia / 2.0) / mmx
+            ry = (dot_dia / 2.0) / mmy
+            # Centre the whole cluster on the box (works for point-marker labels
+            # as well as axis text).
+            cluster_w_mm = (n - 1) * cell_pitch + dot_pitch + dot_dia
+            box_cx_mm = (x + bw / 2.0) * mmx
+            box_cy_mm = (y + bh / 2.0) * mmy
+            start_x_mm = box_cx_mm - cluster_w_mm / 2.0 + dot_dia / 2.0
+            top_y_mm = box_cy_mm - dot_pitch  # middle of the 3 rows on box centre
             for ci, cell in enumerate(cells):
-                cell_x_mm = start_x_mm + ci * cell_pitch_mm
+                cell_x_mm = start_x_mm + ci * cell_pitch
                 for dot in cell:
                     col, row = dot_pos[dot]
-                    cx_mm = cell_x_mm + col * dot_pitch_mm
-                    cy_mm = top_y_mm + row * dot_pitch_mm
+                    cx_mm = cell_x_mm + col * dot_pitch
+                    cy_mm = top_y_mm + row * dot_pitch
                     _stamp_dot(out, cx_mm / mmx, cy_mm / mmy, rx, ry, value)
         return out
 

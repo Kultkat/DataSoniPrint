@@ -635,14 +635,32 @@ elif mode == "🖼️ From Image":
         }[label_mode_label]
 
         engrave_depth = 0.3
+        braille_fit_to_box = False
         if LABEL_MODE == "engrave":
             engrave_depth = st.slider("Engrave depth (mm):", 0.1, 0.8, 0.3, step=0.05)
         elif LABEL_MODE == "braille":
-            st.caption(
-                "Braille uses standard tactile geometry (1.5mm dots, 2.5mm dot "
-                "spacing, 0.6mm tall). Use a high-resolution source image and a "
-                "large enough model for the dots to render cleanly."
+            braille_fit_to_box = st.checkbox(
+                "Fit braille to the original label size",
+                value=False,
+                help=(
+                    "On: each label's braille is shrunk to sit in the same "
+                    "footprint as the printed text (e.g. 'Y22'), so dense maps "
+                    "don't overlap — but the dots may be smaller than the "
+                    "readable tactile standard. Off: full standard-size dots."
+                ),
             )
+            if braille_fit_to_box:
+                st.caption(
+                    "Braille is scaled to each label's footprint (dots kept ≥0.4mm "
+                    "so they still print). Good for packed maps; may be below "
+                    "readable tactile size — enlarge the model (Width/Depth) if so."
+                )
+            else:
+                st.caption(
+                    "Braille uses standard tactile geometry (1.5mm dots, 2.5mm dot "
+                    "spacing, 0.6mm tall). Use a high-resolution source image and a "
+                    "large enough model for the dots to render cleanly."
+                )
 
         if st.button("▶ Generate from Image", key="gen_image"):
             with st.spinner("Converting image to relief..."):
@@ -712,6 +730,7 @@ elif mode == "🖼️ From Image":
                         "boxes": text_boxes,
                         "glyph": glyph,
                         "engrave_depth_mm": engrave_depth,
+                        "fit_to_box": braille_fit_to_box,
                     }
 
                     if BINARY:
@@ -773,6 +792,7 @@ if st.session_state.current_z_grid is not None:
             depth_mm=depth_mm,
             height_mm=height_mm,
             engrave_depth_mm=spec.get("engrave_depth_mm", 0.3),
+            fit_to_box=spec.get("fit_to_box", False),
         )
     else:
         effective_grid = base_grid
