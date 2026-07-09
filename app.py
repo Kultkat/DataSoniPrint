@@ -174,9 +174,9 @@ if "columns" not in st.session_state:
 if "headers" not in st.session_state:
     st.session_state.headers = None
 if "height_mm" not in st.session_state:
-    st.session_state.height_mm = 20.0
+    st.session_state.height_mm = 10.0
 if "width_mm" not in st.session_state:
-    st.session_state.width_mm = 150
+    st.session_state.width_mm = 100
 if "depth_mm" not in st.session_state:
     st.session_state.depth_mm = 100
 if "label_spec" not in st.session_state:
@@ -379,6 +379,16 @@ if mode == "📊 From Data Column":
                     st.session_state.source_name = Path(
                         st.session_state.loaded_file or "data"
                     ).stem
+                    # Default the bed to the grid's aspect ratio, longer side =
+                    # 100mm: a square grid → 100×100mm, a 2:1 grid → 100×50mm, etc.
+                    # (spread_to_grid is square today, but this stays correct if
+                    # that changes). Height defaults to 10mm — a clear bas-relief;
+                    # the grid is normalized [0,1] so 1mm would print near-flat.
+                    gh, gw = z_grid.shape  # rows → depth (y), cols → width (x)
+                    longer = max(gh, gw)
+                    st.session_state.width_mm = max(10, min(200, round(100 * gw / longer / 10) * 10))
+                    st.session_state.depth_mm = max(10, min(200, round(100 * gh / longer / 10) * 10))
+                    st.session_state.height_mm = 10.0
                     st.success(
                         f"✓ Spread {len(z_data)} Z samples → {z_grid.shape[0]}×{z_grid.shape[1]} relief grid"
                     )
