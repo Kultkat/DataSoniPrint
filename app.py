@@ -634,6 +634,19 @@ elif mode == "🖼️ From Image":
             "Braille dots (OCR)": "braille",
         }[label_mode_label]
 
+        ocr_codes_mode = False
+        if LABEL_MODE in ("engrave", "braille"):
+            ocr_codes_mode = st.checkbox(
+                "Labels are short codes (A–Z, 0–9), e.g. map/building labels",
+                value=False,
+                help=(
+                    "Restricts OCR to capital letters and digits and lowers the "
+                    "confidence cutoff, so short codes like Y22, YUS, YG1 on maps "
+                    "are recognized far more reliably. Turn OFF for normal plot "
+                    "text with lowercase letters, units or symbols."
+                ),
+            )
+
         engrave_depth = 0.3
         braille_fit_to_box = False
         if LABEL_MODE == "engrave":
@@ -674,7 +687,14 @@ elif mode == "🖼️ From Image":
                     effective_mode = LABEL_MODE
                     if LABEL_MODE in ("engrave", "braille"):
                         try:
-                            text_boxes = detect_text_regions(tmp_path, min_confidence=40)
+                            # Code mode: constrain to capitals + digits and drop
+                            # the confidence cutoff so short map labels come through.
+                            wl = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+                                  if ocr_codes_mode else None)
+                            conf = 25 if ocr_codes_mode else 40
+                            text_boxes = detect_text_regions(
+                                tmp_path, min_confidence=conf, whitelist=wl
+                            )
                             if text_boxes:
                                 found = ", ".join(b[4] for b in text_boxes[:8])
                                 more = "…" if len(text_boxes) > 8 else ""

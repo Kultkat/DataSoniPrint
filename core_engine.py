@@ -752,6 +752,15 @@ def solidify_surface(z_grid, base_height_mm=1.0):
 # while still giving ~8 px/mm of detail on a 100 mm plate (ample for braille).
 MAX_RELIEF_DIM = 800
 
+# OCR runs on its own higher-resolution copy of the image (independent of the
+# 800 px relief cap): small labels — e.g. building codes on map pins — are far
+# more legible to Tesseract when the glyphs are larger. OCR_MIN_DIM upscales
+# small sources so short codes clear the recognizer's size threshold; OCR_MAX_DIM
+# caps very large sources so a single OCR pass stays fast. Boxes are scaled back
+# to the relief coordinate space before returning.
+OCR_MIN_DIM = 1600
+OCR_MAX_DIM = 2600
+
 
 def _load_grayscale(image_path, max_dim=MAX_RELIEF_DIM):
     """
@@ -840,13 +849,13 @@ def _dedupe_boxes(boxes, iou_thresh=0.4):
     return kept
 
 
-def detect_text_regions(image_path, min_confidence=40, psm=11):
+def detect_text_regions(image_path, min_confidence=40, psm=11, whitelist=None):
     """
     OCR the image and return word bounding boxes as
-    ``[(x, y, w, h, text), ...]`` in image-pixel coordinates.
+    ``[(x, y, w, h, text), ...]`` in relief-grid pixel coordinates.
 
-    Two things make short labels on maps/plots hard for Tesseract, and both are
-    handled here:
+    Several things make short labels on maps/plots hard for Tesseract, and all
+    are handled here:
 
       - **Light text on a dark fill** (e.g. white building codes on coloured map
         pins). Tesseract assumes dark-on-light, so we OCR the image *and* its
@@ -855,6 +864,13 @@ def detect_text_regions(image_path, min_confidence=40, psm=11):
       - **Scattered, isolated labels** (not flowing paragraphs). Page-seg mode
         ``11`` ("sparse text — find as much text as possible in no particular
         order") reads these far better than the default layout analysis.
+      - **Small glyphs.** OCR runs on a higher-resolution copy (see
+        ``OCR_MIN_DIM``/``OCR_MAX_DIM``); tiny pin labels miss entirely at the
+        800 px relief size. Boxes are scaled back to the relief grid on return.
+      - **Ambiguous short codes.** Pass a ``whitelist`` (e.g. capitals + digits)
+        to constrain recognition to that alphabet — this makes Tesseract commit
+        to codes like ``Y22``/``YG1`` instead of rejecting them, sharply raising
+        recall. Leave it ``None`` for general text.
 
     Abbreviations (``YUS``, ``YXX``, ``YG1`` …) need no special handling: they
     are just short alphanumeric tokens, kept as long as they clear
@@ -872,12 +888,30 @@ def detect_text_regions(image_path, min_confidence=40, psm=11):
     if Image is None:
         raise ImportError("Pillow not installed")
 
-    base = _load_grayscale(image_path)
-    arr = np.array(base, dtype=np.uint8)
+    # Boxes are returned in the relief coordinate space (<= MAX_RELIEF_DIM) so
+    # they line up with build_image_relief / apply_labels.
+    relief_img = _load_grayscale(image_path)
+    rw, rh = relief_img.size
+
+    # OCR on a higher-resolution copy; upscale small sources so short labels are
+    # legible, then map the resulting boxes back to the relief grid.
+    ocr_img = _load_grayscale(image_path, max_dim=OCR_MAX_DIM)
+    if max(ocr_img.size) < OCR_MIN_DIM:
+        f = OCR_MIN_DIM / max(ocr_img.size)
+        ocr_img = ocr_img.resize(
+            (max(1, round(ocr_img.width * f)), max(1, round(ocr_img.height * f))),
+            Image.LANCZOS,
+        )
+    ow, oh = ocr_img.size
+    sx, sy = rw / ow, rh / oh  # OCR pixels → relief pixels
+
+    arr = np.array(ocr_img, dtype=np.uint8)
     # Pass 1: as-is (dark text on light — plot axes, black map labels).
     # Pass 2: inverted (light text on dark — white labels on coloured pins).
     variants = (arr, 255 - arr)
     config = f"--psm {int(psm)}"
+    if whitelist:
+        config += f" -c tessedit_char_whitelist={whitelist}"
 
     collected = []
     for variant in variants:
@@ -904,8 +938,9 @@ def detect_text_regions(image_path, min_confidence=40, psm=11):
             if conf < min_confidence:
                 continue
             collected.append((
-                int(data["left"][i]), int(data["top"][i]),
-                int(data["width"][i]), int(data["height"][i]), txt, conf,
+                int(round(data["left"][i] * sx)), int(round(data["top"][i] * sy)),
+                int(round(data["width"][i] * sx)), int(round(data["height"][i] * sy)),
+                txt, conf,
             ))
 
     # Merge the two passes and drop the confidence field to keep the public
