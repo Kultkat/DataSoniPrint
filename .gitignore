@@ -6,3 +6,8 @@ exports/
 *.wav
 *_settings.json
 web/__pycache__/
+
+# UZH logo — trademark of the University of Zurich, not under this repo's CC BY 4.0.
+# Lives only on UZH storage (kaskoe public_html); fetch from
+# https://www.uzh.ch/docroot/logos/uzh_logo_e_pos.svg if you need it locally.
+site/uzh_logo_e_pos.svg

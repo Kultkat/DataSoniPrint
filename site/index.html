@@ -50,7 +50,10 @@
 
     /* UZH masthead */
     .masthead { border-bottom: 3px solid var(--uzh-blue); background: #fff; }
-    .masthead .wrap { display: flex; flex-wrap: wrap; align-items: baseline; gap: .55rem; padding-top: 1rem; padding-bottom: 1rem; }
+    .masthead .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: .55rem; padding-top: 1rem; padding-bottom: 1rem; }
+    /* Official UZH logo, top-left (as on uzh.ch), links to the UZH homepage. */
+    .masthead .uzh-logo { display: inline-flex; align-items: center; }
+    .masthead .uzh-logo img { height: 2.1rem; width: auto; display: block; }
     .masthead .wordmark { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; color: var(--text); }
     .masthead .unit { color: var(--muted); font-size: 1rem; }
     .masthead .unit::before { content: "·"; margin-right: .5rem; }
@@ -153,7 +156,12 @@
 
   <div class="masthead">
     <div class="wrap">
-      <span class="wordmark">University of Zurich</span>
+      <!-- Official UZH logo (trademark of the University of Zurich, NOT covered by
+           this project's CC BY 4.0 licence). Served from UZH storage; source:
+           https://www.uzh.ch/docroot/logos/uzh_logo_e_pos.svg -->
+      <a class="uzh-logo" href="https://www.uzh.ch" aria-label="University of Zurich — go to uzh.ch homepage">
+        <img src="uzh_logo_e_pos.svg" alt="University of Zurich" width="108" height="34" />
+      </a>
       <span class="unit">Physik-Institut · Experimental Physics</span>
     </div>
   </div>
