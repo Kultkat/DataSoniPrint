@@ -1,128 +1,100 @@
 # DataSoniPrint
 
-**Inclusive Data Sonification & 3D Printing from LIGO Gravitational Wave Data**
+**Inclusive scientific data → 3D‑printable tactile relief**
+
+*A “Tactile Data” micro‑innovation project by Prof. Dr. Björn Penning and
+Dipl.‑Des. M.Mus. Kaspar König, University of Zurich, funded by ULF.*
 
 ---
 
 ## Aim
 
-Scientific data is overwhelmingly presented as visual graphs and charts — formats
-that exclude people with visual impairments, and offer nothing tactile or auditory
-for those with hearing aids or different sensory needs.
+Scientific results are overwhelmingly presented as visual graphs and charts —
+formats that exclude people with visual impairments and offer nothing tactile.
+**DataSoniPrint** turns 2D/3D data, math formulas, and images into a
+**watertight STL relief** you can 3D‑print and *feel*, so that understanding a
+graph, map, or function doesn't depend on sight alone.
 
-**DataSoniPrint** converts real LIGO gravitational wave observations into three
-parallel, accessible output modalities:
-
-| Output           | Modality  | Who benefits                                           |
-|------------------|-----------|--------------------------------------------------------|
-| **Sonification** | Audio     | Visually impaired users experience data through sound  |
-| **Spectrogram**  | Visual    | Traditional visual representation of frequency content |
-| **3D STL model** | Tactile   | Blind / low-vision users can *feel* the data as a 3D-printed terrain |
-
-The goal is that **no single sense is required** to experience the data.
-A deaf researcher can hold the 3D print. A blind researcher can listen to the
-sonification. A sighted researcher can read the spectrogram. Everyone gets
-the same underlying dataset.
+It is built for **inclusive teaching**: a printed relief lets students —
+especially those with visual impairments — grasp an idea by touch, and it helps
+every other learner too. A blind or low‑vision learner can hold and feel the
+print; a sighted learner can read the same chart; everyone works from the same
+underlying data.
 
 ---
 
-## What It Does
+## What it does
 
-1. **Loads real LIGO HDF5 data** from the Gravitational Wave Open Science Center
-   (GWOSC). These are actual strain measurements from the H1 and L1 detectors.
+Three ways to make a relief, all ending in a printable STL:
 
-2. **Processes the signal** — bandpass filtering, normalization, and a "data spread"
-   control that ranges from melodic (compressed, tonal) to raw (full dynamic range).
+1. **📊 From a data column** — CSV / HDF5 / NetCDF / GRIB / ASDF. Pick X, Y, Z
+   columns; the data is *spread* onto a 2D height grid.
+2. **🔢 From a math formula** — type `sin(x)*cos(y)`, or pick from a curated
+   **equation gallery** (Riemann ζ, Schrödinger states, gravity well, Mandelbrot,
+   Ricker/“Mexican‑hat” wavelet, Gamma …). A **complex mode** renders `f(z)` with
+   `z = x + i·y` (magnitude / real / imaginary / phase).
+3. **🖼️ From an image** — a plot or photo becomes a relief by brightness.
+   Optional **engraved text** or **braille** axis labels, detected via OCR.
 
-3. **Three simultaneous output panels:**
-   - **Waveform** — raw strain amplitude over time
-   - **Spectrogram** — frequency content visualized with an inferno colormap,
-     with a live playback cursor
-   - **3D terrain preview** — isometric wireframe of the spectrogram surface,
-     exportable as a 3D-printable STL file
+Plus: an on‑demand **live 3D preview**, print‑bed size / height controls, and a
+one‑click **binary STL** download.
 
-4. **Real-time audio playback** with interactive controls:
-   - Data Spread (melodic ↔ raw)
-   - Volume
-   - Speed / Pitch (higher speed = higher pitch — like speeding up a record)
-   - Reverb
-   - Bandpass low & high cutoff
-
-5. **STL export** — one-click export of the spectrogram as a solid 3D mesh
-   (terrain top + flat base + side walls) ready for slicing and 3D printing.
+The underlying idea is simple: an STL relief is a *heightfield* — one real
+height `z` over a 2D `(x, y)` grid. Every input mode is just a different way to
+produce a normalized `z(x, y)`, which is then turned into a solid, watertight
+mesh scaled to the print bed. See the [README](README.md) for the full
+“under the hood” walkthrough.
 
 ---
 
-## Datasets
+## Accessibility by design
 
-| File | Detector | Run | Sample Rate | Duration |
-|------|----------|-----|-------------|----------|
-| `H-H1_GWOSC_O4a_4KHZ_R1-1368195072-4096.hdf5` | H1 (Hanford) | O4a | 4096 Hz | ~68 min |
-| `H-H1_GWOSC_O4a_4KHZ_R1-1368424448-4096.hdf5` | H1 (Hanford) | O4a | 4096 Hz | ~68 min |
+The goal is that **no single sense is required** to experience the data:
 
-Two datasets from the same detector and observing run but different GPS time
-segments, allowing comparison of how different stretches of real data sound and
-look when sonified.
+| Output           | Modality  | Who benefits                                              |
+|------------------|-----------|-----------------------------------------------------------|
+| **3D STL model** | Tactile   | Blind / low‑vision users can *feel* the data as a 3D print |
+| **Braille / engraved labels** | Tactile | Axis labels readable by touch |
+| **Live visual preview** | Visual | Sighted users check the relief before printing |
 
----
-
-## Known Issues & Next Steps
-
-### Audio feedback (v0.2 findings)
-- **Speed slider**: Was not live-updating pitch during playback — fixed with a
-  pyo `SigTo` signal so pitch now tracks the slider in real time.
-- **Bandpass filter**: Low-pass and high-pass adjustments were *barely audible*
-  at certain settings. The filter range may need widening or the Q factor needs
-  tuning for more dramatic effect.
-- **Reverb/delay**: Effect was subtle. May need more aggressive wet/dry mix or
-  additional delay/echo chains for spatial audio cues (important for users with
-  hearing aids who rely on spatial separation).
-
-### Planned improvements
-- [ ] Live bandpass filter update (currently only on slider release)
-- [ ] Add delay/echo effect separate from reverb
-- [ ] Widen bandpass frequency range for more audible impact
-- [ ] Support L1 (Livingston) detector files for cross-detector comparison
-- [ ] Haptic feedback integration (gamepad rumble mapped to amplitude)
-- [ ] Accessible keyboard navigation for all controls
-- [ ] Screen reader annotations for panel content
-- [ ] Audio description mode (spoken narration of data features)
+**Sonification** (hearing the data as sound) is part of the project's long‑term
+vision — the *“Soni”* in DataSoniPrint — and earlier prototypes explored it with
+real LIGO gravitational‑wave data. It is **not part of the current shipped app**;
+the audio path is paused while the tactile/print workflow is the focus, and may
+return in a later version.
 
 ---
 
-## Tech Stack
-
-- **Python 3.12** — main runtime
-- **pyo** — real-time audio synthesis and DSP
-- **pygame** — GUI rendering (lightweight, no heavy framework)
-- **h5py** — LIGO HDF5 data loading
-- **numpy** — signal processing (FFT, bandpass, normalization)
-- **numpy-stl** — 3D mesh generation for STL export
-
----
-
-## Usage
+## Run it
 
 ```bash
-# Activate environment
-source .venv/bin/activate
-
-# Run with default dataset (60s segment)
-python src/ligo_sonifier.py
-
-# Run with specific file and duration
-python src/ligo_sonifier.py ~/Downloads/H-H1_GWOSC_O4a_4KHZ_R1-1368424448-4096.hdf5 --duration 120
-
-# Keyboard shortcuts
-#   SPACE  — play / stop
-#   R      — reprocess audio with current slider values
-#   E      — export STL file
-#   Q/ESC  — quit
+pip install -r requirements.txt
+# OCR labels (optional) also need the Tesseract binary:
+#   Ubuntu/Debian: sudo apt-get install tesseract-ocr
+#   macOS:         brew install tesseract
+streamlit run app.py
 ```
+
+Python 3.10+ recommended. The hosted app runs on Streamlit Community Cloud
+(branch `streamlit-rebuild`, `packages.txt` installs Tesseract for OCR).
 
 ---
 
-## License
+## Project structure
 
-Research / educational use. LIGO data is provided by GWOSC under their
-[data use terms](https://gwosc.org/terms/).
+| File / dir | Role |
+|------------|------|
+| [`app.py`](app.py) | Streamlit UI — widgets, session state, preview, download, maintenance controls. |
+| [`core_engine.py`](core_engine.py) | Pure processing pipeline (load → grid → formula/image → mesh → STL). No Streamlit imports. |
+| [`site/`](site/) | Landing page (`index.html`) + example photos, served at UZH `~kaskoe`. |
+| `src/` | Earlier standalone prototypes (incl. the LIGO audio sonifier) — historical, not the shipped app. |
+
+---
+
+## Credits & licence
+
+Developed at the University of Zurich (Physik‑Institut) as the *“Tactile Data”*
+project by **Prof. Dr. Björn Penning** and **Dipl.‑Des. M.Mus. Kaspar König**,
+funded by **ULF** (Universitäre Lehrförderung). Released under **CC BY 4.0** —
+free to use, share, and adapt with credit to *“DataSoniPrint — B. Penning &
+K. König, University of Zurich.”* See [`LICENSE`](LICENSE).

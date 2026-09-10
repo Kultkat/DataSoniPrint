@@ -104,14 +104,22 @@ faster than ASCII).
   px on the longest side in `_load_grayscale()`. A 5 MB JPG can be 12+ megapixels
   → without a cap it becomes tens of millions of mesh faces and OOM‑kills the
   worker. 800 px keeps the worst case ~2 M faces while giving ~8 px/mm of detail.
-- **True‑aspect bed:** `_bed_from_domain()` (in `app.py`) sizes the bed to the
-  data/formula domain so a non‑square relief isn't stretched into a square.
-- **Preview vs. print:** the on‑screen 3D preview exaggerates the Z axis for
-  legibility (thin reliefs would otherwise look flat); the exported STL always
-  uses the true millimetres shown on the sliders.
-- **Memory readout:** `memory_usage_mb()` powers the sidebar gauge. A *hard* OOM
-  kill (SIGKILL) can't be reported by the process; the gauge lets you watch the
-  trend, and Python‑level `MemoryError`s are caught with a clear message.
+- **True‑aspect bed:** the bed is sized to the input so a non‑square relief isn't
+  stretched into a square. Each mode sets sensible defaults: **data** fits the
+  grid's aspect ratio to a 100 mm longest side at 10 mm height (a clear
+  bas‑relief); **formula** sizes from the domain; **image** from the pixel aspect.
+- **Preview vs. print:** the 3D preview is **on demand** (a *Generate 3D preview*
+  button) and uses **peak‑preserving downsampling** so sharp features (Γ poles,
+  sinc ripples) survive instead of being strided over. It also exaggerates the Z
+  axis for legibility — thin reliefs would otherwise look flat — while the
+  exported STL always uses the true millimetres shown on the sliders.
+- **Memory readout & maintenance:** `memory_usage_mb()` powers the sidebar gauge.
+  A *hard* OOM kill (SIGKILL) can't be reported by the process, so the gauge lets
+  you watch the trend, and Python‑level `MemoryError`s are caught with a clear
+  message. The sidebar **⚙️ Maintenance** panel adds *Clear project & free memory*
+  (drops heavy objects + `gc.collect()`) and *Restart app server* for a guaranteed
+  clean slate. Uploaded data files are parsed **once** and cached, not on every
+  rerun, so slider changes don't re‑ingest a large file.
 - **Upload/limits:** `.streamlit/config.toml` sets `maxUploadSize`/`maxMessageSize`.
   Note the hosted tier has a fixed RAM budget — a very large *data* file can still
   exceed memory while being parsed, even though the upload itself is allowed.
